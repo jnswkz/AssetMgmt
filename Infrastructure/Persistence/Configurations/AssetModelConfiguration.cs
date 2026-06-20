@@ -8,7 +8,7 @@ public class AssetModelConfiguration : IEntityTypeConfiguration<AssetModel>
 {
     public void Configure(EntityTypeBuilder<AssetModel> b)
     {
-        b.ToTable("asset_models", "asset");
+        b.ToTable("asset_models", "asset", t => t.HasTrigger("trg_asset_models_updated_at"));
         b.HasKey(x => x.Id);
         b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("NEWSEQUENTIALID()");
         b.Property(x => x.Name).HasColumnName("name").HasMaxLength(200).IsRequired();

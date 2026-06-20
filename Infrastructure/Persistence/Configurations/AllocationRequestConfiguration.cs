@@ -8,7 +8,7 @@ public class AllocationRequestConfiguration : IEntityTypeConfiguration<Allocatio
 {
     public void Configure(EntityTypeBuilder<AllocationRequest> b)
     {
-        b.ToTable("allocation_requests", "asset");
+        b.ToTable("allocation_requests", "asset", t => t.HasTrigger("trg_allocation_requests_updated_at"));
         b.HasKey(x => x.Id);
         b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("NEWSEQUENTIALID()");
         b.Property(x => x.RequesterId).HasColumnName("requester_id");

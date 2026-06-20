@@ -8,7 +8,7 @@ public class DepreciationPolicyConfiguration : IEntityTypeConfiguration<Deprecia
 {
     public void Configure(EntityTypeBuilder<DepreciationPolicy> b)
     {
-        b.ToTable("depreciation_policies", "asset");
+        b.ToTable("depreciation_policies", "asset", t => t.HasTrigger("trg_depreciation_policies_updated_at"));
         b.HasKey(x => x.Id);
         b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("NEWSEQUENTIALID()");
         b.Property(x => x.AssetModelId).HasColumnName("asset_model_id");

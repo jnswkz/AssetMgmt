@@ -8,7 +8,7 @@ public class MaintenanceRecordConfiguration : IEntityTypeConfiguration<Maintenan
 {
     public void Configure(EntityTypeBuilder<MaintenanceRecord> b)
     {
-        b.ToTable("maintenance_records", "asset");
+        b.ToTable("maintenance_records", "asset", t => t.HasTrigger("trg_maintenance_records_updated_at"));
         b.HasKey(x => x.Id);
         b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("NEWSEQUENTIALID()");
         b.Property(x => x.AssetInstanceId).HasColumnName("asset_instance_id");

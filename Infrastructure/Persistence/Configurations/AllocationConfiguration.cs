@@ -8,7 +8,7 @@ public class AllocationConfiguration : IEntityTypeConfiguration<Allocation>
 {
     public void Configure(EntityTypeBuilder<Allocation> b)
     {
-        b.ToTable("allocations", "asset");
+        b.ToTable("allocations", "asset", t => t.HasTrigger("trg_allocations_no_modify"));
         b.HasKey(x => x.Id);
         b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("NEWSEQUENTIALID()");
         b.Property(x => x.AssetInstanceId).HasColumnName("asset_instance_id");
