@@ -1,5 +1,8 @@
 using System.Text;
+using AssetMgmt.Application.Allocations;
+using AssetMgmt.Application.Assets;
 using AssetMgmt.Application.Auth;
+using AssetMgmt.Application.Requests;
 using AssetMgmt.Infrastructure.Persistence;
 using AssetMgmt.Infrastructure.Services;
 using AssetMgmt.Middleware;
@@ -33,6 +36,13 @@ builder.Services.AddScoped<IPasswordHasher, BCryptPasswordHasher>();
 builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 builder.Services.AddScoped<AuthService>();
+
+// --- Feature services (Days 3-5) ---
+builder.Services.AddScoped<IQrCodeService, QrCodeService>();
+builder.Services.AddScoped<AssetModelService>();
+builder.Services.AddScoped<AssetInstanceService>();
+builder.Services.AddScoped<AllocationRequestService>();
+builder.Services.AddScoped<AllocationHistoryService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -81,6 +91,8 @@ builder.Services.AddSwaggerGen(options =>
 var app = builder.Build();
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+app.UseStaticFiles(); // serve generated QR codes from wwwroot/qr
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
