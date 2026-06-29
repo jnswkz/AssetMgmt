@@ -17,6 +17,7 @@ public class AppDbContext : DbContext
     public DbSet<DepreciationPolicy> DepreciationPolicies => Set<DepreciationPolicy>();
     public DbSet<DepreciationLedger> DepreciationLedger => Set<DepreciationLedger>();
     public DbSet<MaintenanceRecord> MaintenanceRecords => Set<MaintenanceRecord>();
+    public DbSet<AssetDisposal> AssetDisposals => Set<AssetDisposal>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

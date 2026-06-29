@@ -2,7 +2,9 @@ using System.Text;
 using AssetMgmt.Application.Allocations;
 using AssetMgmt.Application.Assets;
 using AssetMgmt.Application.Auth;
+using AssetMgmt.Application.Departments;
 using AssetMgmt.Application.Requests;
+using AssetMgmt.Application.Users;
 using AssetMgmt.Infrastructure.Persistence;
 using AssetMgmt.Infrastructure.Services;
 using AssetMgmt.Middleware;
@@ -43,6 +45,9 @@ builder.Services.AddScoped<AssetModelService>();
 builder.Services.AddScoped<AssetInstanceService>();
 builder.Services.AddScoped<AllocationRequestService>();
 builder.Services.AddScoped<AllocationHistoryService>();
+builder.Services.AddScoped<AssetLifecycleService>();
+builder.Services.AddScoped<UserAdminService>();
+builder.Services.AddScoped<DepartmentService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>

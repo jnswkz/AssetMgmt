@@ -1,3 +1,4 @@
+using AssetMgmt.Application.Allocations;
 using AssetMgmt.Application.Assets;
 using AssetMgmt.Application.Common;
 using AssetMgmt.Domain.Enums;
@@ -12,10 +13,12 @@ namespace AssetMgmt.Controllers;
 public class AssetInstancesController : ControllerBase
 {
     private readonly AssetInstanceService _service;
+    private readonly AssetLifecycleService _lifecycle;
 
-    public AssetInstancesController(AssetInstanceService service)
+    public AssetInstancesController(AssetInstanceService service, AssetLifecycleService lifecycle)
     {
         _service = service;
+        _lifecycle = lifecycle;
     }
 
     [HttpGet]
@@ -48,4 +51,44 @@ public class AssetInstancesController : ControllerBase
         await _service.SoftDeleteAsync(id, ct);
         return NoContent();
     }
+
+    // ---------- Lifecycle (Manager/AdminIT) ----------
+
+    [HttpPost("{id:guid}/return")]
+    [Authorize(Policy = "RequireManager")]
+    public async Task<IActionResult> Return(Guid id, ReturnAssetDto body, CancellationToken ct)
+    {
+        await _lifecycle.ReturnAsync(id, body, ct);
+        return NoContent();
+    }
+
+    [HttpPost("{id:guid}/transfer")]
+    [Authorize(Policy = "RequireManager")]
+    public async Task<IActionResult> Transfer(Guid id, TransferAssetDto body, CancellationToken ct)
+    {
+        await _lifecycle.TransferAsync(id, body, ct);
+        return NoContent();
+    }
+
+    [HttpPost("{id:guid}/maintenance")]
+    [Authorize(Policy = "RequireManager")]
+    public async Task<ActionResult<MaintenanceRecordDto>> StartMaintenance(Guid id, StartMaintenanceDto body, CancellationToken ct)
+        => Ok(await _lifecycle.StartMaintenanceAsync(id, body, ct));
+
+    [HttpPost("{id:guid}/maintenance/{recordId:guid}/complete")]
+    [Authorize(Policy = "RequireManager")]
+    public async Task<ActionResult<MaintenanceRecordDto>> CompleteMaintenance(
+        Guid id, Guid recordId, CompleteMaintenanceDto body, CancellationToken ct)
+        => Ok(await _lifecycle.CompleteMaintenanceAsync(id, recordId, body, ct));
+
+    [HttpGet("{id:guid}/maintenance")]
+    [Authorize(Policy = "RequireManager")]
+    public async Task<ActionResult<PagedResult<MaintenanceRecordDto>>> MaintenanceHistory(
+        Guid id, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken ct = default)
+        => Ok(await _lifecycle.ListMaintenanceAsync(id, new PageQuery(page, pageSize), ct));
+
+    [HttpPost("{id:guid}/dispose")]
+    [Authorize(Policy = "RequireManager")]
+    public async Task<ActionResult<DisposalDto>> Dispose(Guid id, DisposeAssetDto body, CancellationToken ct)
+        => Ok(await _lifecycle.DisposeAsync(id, body, ct));
 }
