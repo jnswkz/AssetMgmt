@@ -3,16 +3,25 @@ using AssetMgmt.Application.Allocations;
 using AssetMgmt.Application.Assets;
 using AssetMgmt.Application.Auth;
 using AssetMgmt.Application.Departments;
+using AssetMgmt.Application.Handover;
+using AssetMgmt.Application.Reports;
 using AssetMgmt.Application.Requests;
 using AssetMgmt.Application.Users;
+using AssetMgmt.Infrastructure.Jobs;
 using AssetMgmt.Infrastructure.Persistence;
 using AssetMgmt.Infrastructure.Services;
 using AssetMgmt.Middleware;
+using Hangfire;
+using Hangfire.SqlServer;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
+using QuestPDF.Infrastructure;
 using Scalar.AspNetCore;
+
+// QuestPDF Community license (free for orgs under $1M revenue). Required before rendering.
+QuestPDF.Settings.License = LicenseType.Community;
 
 DotNetEnv.Env.TraversePath().Load();
 
@@ -24,8 +33,10 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddHttpContextAccessor();
 
+var connectionString = BuildConnectionString(builder.Configuration);
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(BuildConnectionString(builder.Configuration)));
+    options.UseSqlServer(connectionString));
 
 // --- Auth configuration ---
 var jwtOptions = new JwtOptions();
@@ -48,6 +59,30 @@ builder.Services.AddScoped<AllocationHistoryService>();
 builder.Services.AddScoped<AssetLifecycleService>();
 builder.Services.AddScoped<UserAdminService>();
 builder.Services.AddScoped<DepartmentService>();
+
+// --- Day 8: PDF handover + reports ---
+builder.Services.AddScoped<IHandoverDocumentService, HandoverDocumentService>();
+builder.Services.AddScoped<ReportService>();
+
+// --- Background jobs (Day 7) ---
+builder.Services.AddScoped<LockTimeoutJob>();
+builder.Services.AddScoped<DepreciationJob>();
+
+builder.Services.AddHangfire(config => config
+    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+    .UseSimpleAssemblyNameTypeSerializer()
+    .UseRecommendedSerializerSettings()
+    .UseSqlServerStorage(connectionString, new SqlServerStorageOptions
+    {
+        SchemaName = "HangFire",
+        PrepareSchemaIfNecessary = true,
+        CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
+        SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
+        QueuePollInterval = TimeSpan.Zero,
+        UseRecommendedIsolationLevel = true,
+        DisableGlobalLocks = true
+    }));
+builder.Services.AddHangfireServer();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -109,6 +144,25 @@ if (app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Hangfire dashboard + recurring jobs (Day 7).
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    Authorization = new[]
+    {
+        new HangfireDashboardAuthorizationFilter(app.Environment.IsDevelopment())
+    }
+});
+
+RecurringJob.AddOrUpdate<LockTimeoutJob>(
+    "lock-timeout",
+    job => job.RunAsync(CancellationToken.None),
+    "*/5 * * * *"); // every 5 minutes
+
+RecurringJob.AddOrUpdate<DepreciationJob>(
+    "depreciation-monthly",
+    job => job.RunAsync(CancellationToken.None),
+    "0 1 1 * *"); // 01:00 UTC on the 1st of each month
 
 app.MapControllers();
 
