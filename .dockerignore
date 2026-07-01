@@ -1,0 +1,24 @@
+# Build artifacts
+**/bin/
+**/obj/
+**/out/
+
+# Secrets & local config — never bake into the image
+.env
+*.user
+
+# Version control & IDE
+.git/
+.gitignore
+.vs/
+.vscode/
+.idea/
+
+# Docker files themselves
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Docs & planning (not needed in the image)
+VDTPlan/
+*.md

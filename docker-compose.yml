@@ -1,0 +1,70 @@
+# =============================================================
+# AssetMgmt — full stack: SQL Server 2022 + one-shot DB init + API.
+#
+#   docker compose up --build
+#
+# Override secrets via a .env file or the shell environment:
+#   SA_PASSWORD  — SQL Server 'sa' password (default below)
+#   JWT_SECRET   — JWT signing secret, >= 32 chars (default below)
+# =============================================================
+
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${SA_PASSWORD:-Str0ng!Passw0rd}"
+      MSSQL_PID: Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$${MSSQL_SA_PASSWORD}\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # Runs the DB-first init script + disposal migration exactly once.
+  db-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SA_PASSWORD: "${SA_PASSWORD:-Str0ng!Passw0rd}"
+    entrypoint: ["bash", "/docker/db-init.sh"]
+    volumes:
+      - ./docker/db-init.sh:/docker/db-init.sh:ro
+      - ./VDTPlan/database-init.sql:/sql/database-init.sql:ro
+      - ./Migrations/manual/001_asset_disposals.sql:/sql/001_asset_disposals.sql:ro
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      # Connection (app builds the string from these — connects as sa so Hangfire
+      # can create its schema, matching the RDS setup).
+      DB_SERVER: db
+      DB_PORT: "1433"
+      DB_NAME: AssetMgmt
+      DB_USER: sa
+      DB_PASSWORD: "${SA_PASSWORD:-Str0ng!Passw0rd}"
+      DB_TRUST_CERT: "True"
+      JWT_SECRET: "${JWT_SECRET:-docker-compose-dev-secret-change-me-please-32+chars}"
+      SEED_DEFAULT_PASSWORD: "${SEED_DEFAULT_PASSWORD:-Password123!}"
+    ports:
+      - "8080:8080"
+
+volumes:
+  mssql-data:
