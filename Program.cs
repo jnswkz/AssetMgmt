@@ -13,6 +13,8 @@ using AssetMgmt.Infrastructure.Services;
 using AssetMgmt.Middleware;
 using Hangfire;
 using Hangfire.SqlServer;
+using FluentValidation;
+using FluentValidation.AspNetCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -30,6 +32,11 @@ builder.Configuration.AddEnvironmentVariables();
 
 // Add services to the container.
 builder.Services.AddControllers();
+
+// FluentValidation (Day 9) — auto-validate all request DTOs.
+builder.Services.AddValidatorsFromAssemblyContaining<Program>();
+builder.Services.AddFluentValidationAutoValidation();
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddHttpContextAccessor();
 
@@ -63,6 +70,9 @@ builder.Services.AddScoped<DepartmentService>();
 // --- Day 8: PDF handover + reports ---
 builder.Services.AddScoped<IHandoverDocumentService, HandoverDocumentService>();
 builder.Services.AddScoped<ReportService>();
+
+// --- Startup seeding ---
+builder.Services.AddScoped<DbSeeder>();
 
 // --- Background jobs (Day 7) ---
 builder.Services.AddScoped<LockTimeoutJob>();
@@ -130,6 +140,13 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
+// Activate seeded demo accounts (replace placeholder password hashes).
+using (var scope = app.Services.CreateScope())
+{
+    var seeder = scope.ServiceProvider.GetRequiredService<DbSeeder>();
+    await seeder.SeedPasswordsAsync();
+}
+
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 app.UseStaticFiles(); // serve generated QR codes from wwwroot/qr
@@ -144,6 +161,9 @@ if (app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Audit sensitive (mutating) API calls — after auth so the user is known.
+app.UseMiddleware<AuditLoggingMiddleware>();
 
 // Hangfire dashboard + recurring jobs (Day 7).
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
