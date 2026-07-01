@@ -1,4 +1,5 @@
 using AssetMgmt.Application.Common;
+using AssetMgmt.Application.Handover;
 using AssetMgmt.Application.Requests;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,10 +11,13 @@ namespace AssetMgmt.Controllers;
 public class AllocationRequestsController : ControllerBase
 {
     private readonly AllocationRequestService _service;
+    private readonly IHandoverDocumentService _handover;
 
-    public AllocationRequestsController(AllocationRequestService service)
+    public AllocationRequestsController(
+        AllocationRequestService service, IHandoverDocumentService handover)
     {
         _service = service;
+        _handover = handover;
     }
 
     [HttpPost]
@@ -50,4 +54,12 @@ public class AllocationRequestsController : ControllerBase
     [Authorize(Policy = "RequireManager")]
     public async Task<ActionResult<AllocationRequestDto>> Reject(Guid id, RejectRequestDto body, CancellationToken ct)
         => Ok(await _service.RejectAsync(id, body.Reason, ct));
+
+    [HttpGet("{id:guid}/handover")]
+    [Authorize(Policy = "RequireEmployee")]
+    public async Task<ActionResult<HandoverResult>> GetHandover(Guid id, CancellationToken ct)
+    {
+        var result = await _handover.GetForRequestAsync(id, ct);
+        return result is not null ? Ok(result) : NotFound();
+    }
 }

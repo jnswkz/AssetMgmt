@@ -1,5 +1,6 @@
 using AssetMgmt.Application.Auth;
 using AssetMgmt.Application.Common;
+using AssetMgmt.Application.Handover;
 using AssetMgmt.Domain.Entities;
 using AssetMgmt.Domain.Enums;
 using AssetMgmt.Domain.Exceptions;
@@ -14,11 +15,14 @@ public class AllocationRequestService
 
     private readonly AppDbContext _db;
     private readonly ICurrentUser _currentUser;
+    private readonly IHandoverDocumentService _handover;
 
-    public AllocationRequestService(AppDbContext db, ICurrentUser currentUser)
+    public AllocationRequestService(
+        AppDbContext db, ICurrentUser currentUser, IHandoverDocumentService handover)
     {
         _db = db;
         _currentUser = currentUser;
+        _handover = handover;
     }
 
     private Guid CurrentUserId =>
@@ -155,7 +159,7 @@ public class AllocationRequestService
         asset.LockHolderUserId = null;
         asset.UpdatedBy = approverId;
 
-        _db.Allocations.Add(new Allocation
+        var allocation = new Allocation
         {
             AssetInstanceId = asset.Id,
             UserId = request.RequesterId,
@@ -163,9 +167,15 @@ public class AllocationRequestService
             StartDate = now,
             AllocationRequestId = request.Id,
             CreatedBy = approverId
-        });
+        };
+        _db.Allocations.Add(allocation);
 
         await _db.SaveChangesAsync(ct);
+
+        // Generate the handover record (Biên bản bàn giao) for this allocation.
+        // Shares this DbContext/transaction, so it commits atomically below.
+        await _handover.GenerateForAllocationAsync(allocation.Id, approverId, ct);
+
         await tx.CommitAsync(ct);
 
         return await GetByIdAsync(request.Id, ct);
