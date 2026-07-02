@@ -44,41 +44,60 @@ public class AllocationRequestService
             return await GetByIdAsync(existing.Id, ct);
 
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
-
-        var asset = await _db.AssetInstances.FirstOrDefaultAsync(a => a.Id == req.AssetInstanceId, ct)
-            ?? throw new DomainException("Asset not found.");
-
-        if (asset.Status != AssetStatus.InStock)
-            throw new DomainException("Asset is not available for request.");
-
-        var now = DateTime.UtcNow;
-        var lockToken = Guid.NewGuid().ToString("N");
-
-        // Temp-lock the asset. CK_asset_instances_holder_status requires a holder for LockedTemp.
-        asset.Status = AssetStatus.LockedTemp;
-        asset.CurrentHolderId = requesterId;
-        asset.LockToken = lockToken;
-        asset.LockExpiresAt = now.Add(LockTtl);
-        asset.LockHolderUserId = requesterId;
-        asset.UpdatedBy = requesterId;
-
-        var request = new AllocationRequest
+        try
         {
-            RequesterId = requesterId,
-            AssetInstanceId = asset.Id,
-            Status = RequestStatus.Pending,
-            Reason = req.Reason,
-            ExpectedDurationMonths = req.ExpectedDurationMonths,
-            IdempotencyKey = req.IdempotencyKey,
-            LockToken = lockToken,
-            LockExpiresAt = now.Add(LockTtl)
-        };
-        _db.AllocationRequests.Add(request);
+            var asset = await _db.AssetInstances.FirstOrDefaultAsync(a => a.Id == req.AssetInstanceId, ct)
+                ?? throw new DomainException("Asset not found.");
 
-        await _db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
+            if (asset.Status != AssetStatus.InStock)
+                throw new DomainException("Asset is not available for request.");
 
-        return await GetByIdAsync(request.Id, ct);
+            var now = DateTime.UtcNow;
+            var lockToken = Guid.NewGuid().ToString("N");
+
+            // Temp-lock the asset. CK_asset_instances_holder_status requires a holder for LockedTemp.
+            asset.Status = AssetStatus.LockedTemp;
+            asset.CurrentHolderId = requesterId;
+            asset.LockToken = lockToken;
+            asset.LockExpiresAt = now.Add(LockTtl);
+            asset.LockHolderUserId = requesterId;
+            asset.UpdatedBy = requesterId;
+
+            var request = new AllocationRequest
+            {
+                RequesterId = requesterId,
+                AssetInstanceId = asset.Id,
+                Status = RequestStatus.Pending,
+                Reason = req.Reason,
+                ExpectedDurationMonths = req.ExpectedDurationMonths,
+                IdempotencyKey = req.IdempotencyKey,
+                LockToken = lockToken,
+                LockExpiresAt = now.Add(LockTtl)
+            };
+            _db.AllocationRequests.Add(request);
+
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+
+            return await GetByIdAsync(request.Id, ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(ct);
+            throw new ConflictException("Asset was just reserved or changed. Refresh and try another available asset.");
+        }
+        catch (DbUpdateException)
+        {
+            await tx.RollbackAsync(ct);
+            _db.ChangeTracker.Clear();
+
+            var request = await _db.AllocationRequests.AsNoTracking()
+                .FirstOrDefaultAsync(r => r.IdempotencyKey == req.IdempotencyKey, ct);
+            if (request is not null)
+                return await GetByIdAsync(request.Id, ct);
+
+            throw;
+        }
     }
 
     public async Task<PagedResult<RequestListItem>> ListPendingAsync(PageQuery page, CancellationToken ct)
@@ -135,83 +154,115 @@ public class AllocationRequestService
     {
         var approverId = CurrentUserId;
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
-
-        var request = await _db.AllocationRequests.FirstOrDefaultAsync(r => r.Id == id, ct)
-            ?? throw new DomainException("Request not found.");
-        if (request.Status != RequestStatus.Pending)
-            throw new DomainException("Only pending requests can be approved.");
-
-        var asset = await _db.AssetInstances.FirstOrDefaultAsync(a => a.Id == request.AssetInstanceId, ct)
-            ?? throw new DomainException("Asset not found.");
-
-        var now = DateTime.UtcNow;
-
-        request.Status = RequestStatus.Approved;
-        request.ApproverId = approverId;
-        request.ApprovedAt = now;
-        request.LockToken = null;
-        request.LockExpiresAt = null;
-
-        asset.Status = AssetStatus.Allocated;
-        asset.CurrentHolderId = request.RequesterId;
-        asset.LockToken = null;
-        asset.LockExpiresAt = null;
-        asset.LockHolderUserId = null;
-        asset.UpdatedBy = approverId;
-
-        var allocation = new Allocation
+        try
         {
-            AssetInstanceId = asset.Id,
-            UserId = request.RequesterId,
-            EventType = AllocationEventType.Allocated,
-            StartDate = now,
-            AllocationRequestId = request.Id,
-            CreatedBy = approverId
-        };
-        _db.Allocations.Add(allocation);
+            var request = await _db.AllocationRequests.FirstOrDefaultAsync(r => r.Id == id, ct)
+                ?? throw new DomainException("Request not found.");
+            if (request.Status != RequestStatus.Pending)
+                throw new DomainException("Only pending requests can be approved.");
 
-        await _db.SaveChangesAsync(ct);
+            var asset = await _db.AssetInstances.FirstOrDefaultAsync(a => a.Id == request.AssetInstanceId, ct)
+                ?? throw new DomainException("Asset not found.");
 
-        // Generate the handover record (Biên bản bàn giao) for this allocation.
-        // Shares this DbContext/transaction, so it commits atomically below.
-        await _handover.GenerateForAllocationAsync(allocation.Id, approverId, ct);
+            var now = DateTime.UtcNow;
+            EnsureRequestStillOwnsAssetLock(request, asset, now);
 
-        await tx.CommitAsync(ct);
+            request.Status = RequestStatus.Approved;
+            request.ApproverId = approverId;
+            request.ApprovedAt = now;
+            request.LockToken = null;
+            request.LockExpiresAt = null;
 
-        return await GetByIdAsync(request.Id, ct);
+            asset.Status = AssetStatus.Allocated;
+            asset.CurrentHolderId = request.RequesterId;
+            asset.LockToken = null;
+            asset.LockExpiresAt = null;
+            asset.LockHolderUserId = null;
+            asset.UpdatedBy = approverId;
+
+            var allocation = new Allocation
+            {
+                AssetInstanceId = asset.Id,
+                UserId = request.RequesterId,
+                EventType = AllocationEventType.Allocated,
+                StartDate = now,
+                AllocationRequestId = request.Id,
+                CreatedBy = approverId
+            };
+            _db.Allocations.Add(allocation);
+
+            await _db.SaveChangesAsync(ct);
+
+            // Generate the handover record (Biên bản bàn giao) for this allocation.
+            // Shares this DbContext/transaction, so it commits atomically below.
+            await _handover.GenerateForAllocationAsync(allocation.Id, approverId, ct);
+
+            await tx.CommitAsync(ct);
+
+            return await GetByIdAsync(request.Id, ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(ct);
+            throw new ConflictException("Request or asset was changed by another action. Refresh and try again.");
+        }
     }
 
     public async Task<AllocationRequestDto> RejectAsync(Guid id, string reason, CancellationToken ct)
     {
         var approverId = CurrentUserId;
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            var request = await _db.AllocationRequests.FirstOrDefaultAsync(r => r.Id == id, ct)
+                ?? throw new DomainException("Request not found.");
+            if (request.Status != RequestStatus.Pending)
+                throw new DomainException("Only pending requests can be rejected.");
 
-        var request = await _db.AllocationRequests.FirstOrDefaultAsync(r => r.Id == id, ct)
-            ?? throw new DomainException("Request not found.");
-        if (request.Status != RequestStatus.Pending)
-            throw new DomainException("Only pending requests can be rejected.");
+            var asset = await _db.AssetInstances.FirstOrDefaultAsync(a => a.Id == request.AssetInstanceId, ct)
+                ?? throw new DomainException("Asset not found.");
 
-        var asset = await _db.AssetInstances.FirstOrDefaultAsync(a => a.Id == request.AssetInstanceId, ct)
-            ?? throw new DomainException("Asset not found.");
+            EnsureRequestStillOwnsAssetLock(request, asset, DateTime.UtcNow);
 
-        request.Status = RequestStatus.Rejected;
-        request.RejectedReason = reason;
-        request.ApproverId = approverId;
-        request.LockToken = null;
-        request.LockExpiresAt = null;
+            request.Status = RequestStatus.Rejected;
+            request.RejectedReason = reason;
+            request.ApproverId = approverId;
+            request.LockToken = null;
+            request.LockExpiresAt = null;
 
-        // Release the temp lock: back to InStock (holder must be null per check constraint).
-        asset.Status = AssetStatus.InStock;
-        asset.CurrentHolderId = null;
-        asset.LockToken = null;
-        asset.LockExpiresAt = null;
-        asset.LockHolderUserId = null;
-        asset.UpdatedBy = approverId;
+            // Release the temp lock: back to InStock (holder must be null per check constraint).
+            asset.Status = AssetStatus.InStock;
+            asset.CurrentHolderId = null;
+            asset.LockToken = null;
+            asset.LockExpiresAt = null;
+            asset.LockHolderUserId = null;
+            asset.UpdatedBy = approverId;
 
-        await _db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
 
-        return await GetByIdAsync(request.Id, ct);
+            return await GetByIdAsync(request.Id, ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(ct);
+            throw new ConflictException("Request or asset was changed by another action. Refresh and try again.");
+        }
+    }
+
+    private static void EnsureRequestStillOwnsAssetLock(
+        AllocationRequest request,
+        AssetInstance asset,
+        DateTime now)
+    {
+        if (request.LockExpiresAt is not null && request.LockExpiresAt <= now)
+            throw new ConflictException("The temporary asset lock has expired. Refresh the request list.");
+
+        if (asset.Status != AssetStatus.LockedTemp ||
+            asset.LockToken != request.LockToken ||
+            asset.LockHolderUserId != request.RequesterId ||
+            asset.CurrentHolderId != request.RequesterId)
+            throw new ConflictException("Asset is no longer reserved for this request. Refresh the request list.");
     }
 
     private static System.Linq.Expressions.Expression<Func<AllocationRequest, RequestListItem>> MapListItem() =>

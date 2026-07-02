@@ -29,6 +29,7 @@ public class AssetInstanceConfiguration : IEntityTypeConfiguration<AssetInstance
         b.Property(x => x.LockHolderUserId).HasColumnName("lock_holder_user_id");
 
         b.Property(x => x.Version).HasColumnName("version").HasDefaultValue(1);
+        b.Property(x => x.RowVersion).HasColumnName("row_version").IsRowVersion();
 
         b.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("SYSUTCDATETIME()");
         b.Property(x => x.CreatedBy).HasColumnName("created_by");

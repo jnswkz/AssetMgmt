@@ -22,6 +22,7 @@ public class AllocationRequest
 
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+    public byte[] RowVersion { get; set; } = Array.Empty<byte>();
 
     public User Requester { get; set; } = null!;
     public AssetInstance AssetInstance { get; set; } = null!;

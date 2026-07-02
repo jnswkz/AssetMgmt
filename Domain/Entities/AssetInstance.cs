@@ -23,6 +23,7 @@ public class AssetInstance
     public Guid? LockHolderUserId { get; set; }
 
     public int Version { get; set; } = 1;
+    public byte[] RowVersion { get; set; } = Array.Empty<byte>();
 
     public DateTime CreatedAt { get; set; }
     public Guid? CreatedBy { get; set; }

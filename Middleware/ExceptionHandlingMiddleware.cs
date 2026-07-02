@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AssetMgmt.Domain.Exceptions;
+using Microsoft.EntityFrameworkCore;
 
 namespace AssetMgmt.Middleware;
 
@@ -23,6 +24,15 @@ public class ExceptionHandlingMiddleware
         catch (DomainException ex)
         {
             await WriteProblem(context, StatusCodes.Status400BadRequest, "Bad Request", ex.Message);
+        }
+        catch (ConflictException ex)
+        {
+            await WriteProblem(context, StatusCodes.Status409Conflict, "Conflict", ex.Message);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await WriteProblem(context, StatusCodes.Status409Conflict,
+                "Conflict", "The record was changed by another action. Refresh and try again.");
         }
         catch (Exception ex)
         {

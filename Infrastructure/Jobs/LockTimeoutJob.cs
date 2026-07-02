@@ -63,8 +63,18 @@ public class LockTimeoutJob
             request.LockExpiresAt = null;
         }
 
-        await _db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(ct);
+            _logger.LogInformation(
+                "LockTimeoutJob: skipped expiration batch because one or more requests/assets changed concurrently.");
+            return;
+        }
 
         _logger.LogInformation(
             "LockTimeoutJob: expired {ExpiredCount} request(s), released {ReleasedCount} asset(s) back to stock.",
