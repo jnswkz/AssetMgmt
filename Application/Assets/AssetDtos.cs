@@ -58,7 +58,8 @@ public record AssetInstanceListItem(
     Guid? CurrentHolderId,
     string? CurrentHolderName,
     string? Location,
-    string? QrCodePath);
+    string? QrCodePath,
+    string? QrCodeUrl);
 
 public record AssetInstanceDto(
     Guid Id,
@@ -75,6 +76,7 @@ public record AssetInstanceDto(
     string? Location,
     DateTime? WarrantyExpiresAt,
     string? QrCodePath,
+    string? QrCodeUrl,
     string? Notes,
     int Version,
     DateTime CreatedAt,

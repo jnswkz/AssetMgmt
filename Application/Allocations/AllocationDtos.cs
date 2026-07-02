@@ -22,4 +22,12 @@ public record MyAssetItem(
     string ModelName,
     AssetStatus Status,
     string? Location,
-    DateTime StartDate);
+    DateTime StartDate,
+    Guid? AllocationRequestId,
+    string? HandoverDocumentNumber,
+    string? HandoverFilePath,
+    string? HandoverFileUrl);
+
+public record MyAssetHandoverFile(
+    string DocumentNumber,
+    string FilePath);

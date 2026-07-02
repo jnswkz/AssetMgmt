@@ -40,6 +40,22 @@ builder.Services.AddFluentValidationAutoValidation();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddHttpContextAccessor();
 
+// DEV: default allows any origin. TODO: switch back to "http://localhost:4200"
+// (or the real frontend origin) before production.
+var corsOrigins = (builder.Configuration["CORS_ALLOWED_ORIGINS"] ?? "*")
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("Frontend", policy =>
+    {
+        // DEV: "*" allows any origin. Switch back to a fixed origin list for production.
+        if (corsOrigins.Contains("*"))
+            policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
+        else
+            policy.WithOrigins(corsOrigins).AllowAnyHeader().AllowAnyMethod();
+    });
+});
+
 var connectionString = BuildConnectionString(builder.Configuration);
 
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -158,6 +174,8 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger(options => options.RouteTemplate = "openapi/{documentName}.json");
     app.MapScalarApiReference(); // UI at /scalar/v1
 }
+
+app.UseCors("Frontend");
 
 app.UseAuthentication();
 app.UseAuthorization();

@@ -5,6 +5,7 @@ using AssetMgmt.Domain.Enums;
 using AssetMgmt.Domain.Exceptions;
 using AssetMgmt.Infrastructure.Persistence;
 using AssetMgmt.Infrastructure.Services;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 
 namespace AssetMgmt.Application.Assets;
@@ -14,12 +15,18 @@ public class AssetInstanceService
     private readonly AppDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IQrCodeService _qr;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
-    public AssetInstanceService(AppDbContext db, ICurrentUser currentUser, IQrCodeService qr)
+    public AssetInstanceService(
+        AppDbContext db,
+        ICurrentUser currentUser,
+        IQrCodeService qr,
+        IHttpContextAccessor httpContextAccessor)
     {
         _db = db;
         _currentUser = currentUser;
         _qr = qr;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     public async Task<PagedResult<AssetInstanceListItem>> ListAsync(
@@ -40,14 +47,29 @@ public class AssetInstanceService
         }
 
         var total = await query.CountAsync(ct);
-        var items = await query
+        var rows = await query
             .OrderBy(a => a.AssetCode)
             .Skip(page.Skip).Take(page.NormalizedPageSize)
-            .Select(a => new AssetInstanceListItem(
-                a.Id, a.AssetCode, a.Serial, a.ModelId, a.Model.Name, a.Status,
-                a.CurrentHolderId, a.CurrentHolder != null ? a.CurrentHolder.FullName : null,
-                a.Location, a.QrCodePath))
+            .Select(a => new
+            {
+                a.Id,
+                a.AssetCode,
+                a.Serial,
+                a.ModelId,
+                ModelName = a.Model.Name,
+                a.Status,
+                a.CurrentHolderId,
+                CurrentHolderName = a.CurrentHolder != null ? a.CurrentHolder.FullName : null,
+                a.Location,
+                a.QrCodePath
+            })
             .ToListAsync(ct);
+
+        var items = rows
+            .Select(a => new AssetInstanceListItem(
+                a.Id, a.AssetCode, a.Serial, a.ModelId, a.ModelName, a.Status,
+                a.CurrentHolderId, a.CurrentHolderName, a.Location, a.QrCodePath, ToPublicUrl(a.QrCodePath)))
+            .ToList();
 
         return new PagedResult<AssetInstanceListItem>(items, total, page.NormalizedPage, page.NormalizedPageSize);
     }
@@ -137,9 +159,25 @@ public class AssetInstanceService
         await _db.SaveChangesAsync(ct);
     }
 
-    private static AssetInstanceDto Map(AssetInstance a) => new(
+    private AssetInstanceDto Map(AssetInstance a) => new(
         a.Id, a.AssetCode, a.Serial, a.ModelId, a.Model?.Name ?? string.Empty, a.Status,
         a.CurrentHolderId, a.CurrentHolder?.FullName,
         a.AcquisitionCost, a.AcquisitionDate, a.SalvageValue, a.Location,
-        a.WarrantyExpiresAt, a.QrCodePath, a.Notes, a.Version, a.CreatedAt, a.UpdatedAt);
+        a.WarrantyExpiresAt, a.QrCodePath, ToPublicUrl(a.QrCodePath), a.Notes, a.Version, a.CreatedAt, a.UpdatedAt);
+
+    private string? ToPublicUrl(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        if (Uri.TryCreate(path, UriKind.Absolute, out _))
+            return path;
+
+        var request = _httpContextAccessor.HttpContext?.Request;
+        if (request is null)
+            return path;
+
+        var normalizedPath = path.StartsWith('/') ? path : $"/{path}";
+        return $"{request.Scheme}://{request.Host}{request.PathBase}{normalizedPath}";
+    }
 }
