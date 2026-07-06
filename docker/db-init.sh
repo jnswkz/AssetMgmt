@@ -2,11 +2,17 @@
 # =============================================================
 # One-shot database initializer for docker-compose.
 # Runs the full DB-first init script + the disposal migration,
-# but only once — guarded on whether AssetMgmt already has users.
+# but only once â€” guarded on whether AssetMgmt already has users.
 # =============================================================
 set -euo pipefail
 
-SQLCMD=(/opt/mssql-tools18/bin/sqlcmd -S db -U sa -P "$SA_PASSWORD" -C)
+if [ -x /opt/mssql-tools18/bin/sqlcmd ]; then
+  SQLCMD_BIN=/opt/mssql-tools18/bin/sqlcmd
+else
+  SQLCMD_BIN=/opt/mssql-tools/bin/sqlcmd
+fi
+
+SQLCMD=("$SQLCMD_BIN" -S db -U sa -P "$SA_PASSWORD" -C)
 
 echo "db-init: waiting for SQL Server to accept connections..."
 for _ in $(seq 1 60); do
@@ -27,10 +33,10 @@ if [ "${COUNT:-0}" -gt 0 ]; then
   exit 0
 fi
 
-echo "db-init: running database-init.sql ..."
-"${SQLCMD[@]}" -b -i /sql/database-init.sql
-
-echo "db-init: running 001_asset_disposals.sql ..."
-"${SQLCMD[@]}" -b -i /sql/001_asset_disposals.sql
+echo "db-init: running migration scripts ..."
+for script in /sql/*.sql; do
+  echo "db-init: running $(basename "$script") ..."
+  "${SQLCMD[@]}" -b -i "$script"
+done
 
 echo "db-init: complete."
