@@ -1,5 +1,6 @@
 using System.Text;
 using AssetMgmt.Application.Allocations;
+using AssetMgmt.Application.Agents;
 using AssetMgmt.Application.Assets;
 using AssetMgmt.Application.Auth;
 using AssetMgmt.Application.Departments;
@@ -39,6 +40,7 @@ builder.Services.AddFluentValidationAutoValidation();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddHttpContextAccessor();
+builder.Services.Configure<AiRouterOptions>(builder.Configuration.GetSection(AiRouterOptions.SectionName));
 
 // DEV: default allows any origin. TODO: switch back to "http://localhost:4200"
 // (or the real frontend origin) before production.
@@ -82,6 +84,22 @@ builder.Services.AddScoped<AllocationHistoryService>();
 builder.Services.AddScoped<AssetLifecycleService>();
 builder.Services.AddScoped<UserAdminService>();
 builder.Services.AddScoped<DepartmentService>();
+builder.Services.AddScoped<AiAssetAccessService>();
+builder.Services.AddScoped<AiConversationStore>();
+builder.Services.AddScoped<AiOperationsService>();
+builder.Services.AddScoped<AiAskService>();
+builder.Services.AddScoped<IAiRouterService, OpenAiRouterService>();
+builder.Services.AddScoped<IAiToolHandler, GetMyAssetsTool>();
+builder.Services.AddScoped<IAiToolHandler, GetAssetStatusTool>();
+builder.Services.AddScoped<IAiToolHandler, SearchManualSourcesTool>();
+builder.Services.AddScoped<IAiToolHandler, CreateMaintenanceDraftTool>();
+builder.Services.AddScoped<IAiToolHandler, ListAssetsTool>();
+builder.Services.AddScoped<IAiToolHandler, ListAssetModelsTool>();
+builder.Services.AddScoped<IAiToolHandler, CreateAllocationRequestTool>();
+builder.Services.AddScoped<IAiToolHandler, ListPendingRequestsTool>();
+builder.Services.AddScoped<IAiToolHandler, ApproveAllocationRequestTool>();
+builder.Services.AddScoped<IAiToolHandler, RejectAllocationRequestTool>();
+builder.Services.AddScoped<IAiToolHandler, AskClarifyingQuestionTool>();
 
 // --- Day 8: PDF handover + reports ---
 builder.Services.AddScoped<IHandoverDocumentService, HandoverDocumentService>();

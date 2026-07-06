@@ -19,6 +19,8 @@ public class AppDbContext : DbContext
     public DbSet<MaintenanceRecord> MaintenanceRecords => Set<MaintenanceRecord>();
     public DbSet<AssetDisposal> AssetDisposals => Set<AssetDisposal>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<AiAgentConversation> AiAgentConversations => Set<AiAgentConversation>();
+    public DbSet<AiAgentMessage> AiAgentMessages => Set<AiAgentMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
