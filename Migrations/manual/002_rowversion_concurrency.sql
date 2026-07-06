@@ -1,3 +1,10 @@
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
+GO
+
+USE AssetMgmt;
+GO
+
 IF COL_LENGTH('asset.asset_instances', 'row_version') IS NULL
 BEGIN
     ALTER TABLE asset.asset_instances

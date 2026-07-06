@@ -23,12 +23,21 @@ EXPOSE 8080
 
 COPY --from=build /app/publish ./
 
-# The app writes generated QR codes and handover PDFs under wwwroot at runtime;
-# make those directories owned by the non-root user.
+# The app writes generated QR codes and handover PDFs under wwwroot at runtime.
 RUN mkdir -p /app/wwwroot/qr /app/wwwroot/handovers \
     && chown -R $APP_UID:$APP_UID /app/wwwroot
 
-# Run as the built-in non-root user shipped with the aspnet image.
+# Run as the built-in non-root user shipped with the ASP.NET image.
 USER $APP_UID
+
+# Default app environment variables. Override secrets via compose/.env.
+ENV ASPNETCORE_ENVIRONMENT=Development \
+    DB_SERVER=localhost \
+    DB_PORT=1433 \
+    DB_NAME=AssetMgmt \
+    DB_USER=sa \
+    DB_PASSWORD=Str0ng!Passw0rd \
+    DB_TRUST_CERT=True \
+    JWT_SECRET=change-me-to-a-strong-secret
 
 ENTRYPOINT ["dotnet", "AssetMgmt.dll"]
