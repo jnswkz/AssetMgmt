@@ -12,11 +12,13 @@ public class AssetLifecycleService
 {
     private readonly AppDbContext _db;
     private readonly ICurrentUser _currentUser;
+    private readonly DataScopeService _scope;
 
-    public AssetLifecycleService(AppDbContext db, ICurrentUser currentUser)
+    public AssetLifecycleService(AppDbContext db, ICurrentUser currentUser, DataScopeService scope)
     {
         _db = db;
         _currentUser = currentUser;
+        _scope = scope;
     }
 
     private Guid CurrentUserId =>
@@ -76,6 +78,7 @@ public class AssetLifecycleService
 
         var toUser = await _db.Users.FirstOrDefaultAsync(u => u.Id == dto.ToUserId, ct)
             ?? throw new DomainException("Target user not found.");
+        if (_scope.IsManager) await _scope.EnsureDepartmentAccessAsync(toUser.DepartmentId, ct);
         if (!toUser.IsActive)
             throw new DomainException("Target user is not active.");
 
@@ -183,6 +186,7 @@ public class AssetLifecycleService
     public async Task<PagedResult<MaintenanceRecordDto>> ListMaintenanceAsync(
         Guid assetId, PageQuery page, CancellationToken ct)
     {
+        await GetAssetAsync(assetId, ct);
         var query = _db.MaintenanceRecords.AsNoTracking()
             .Where(r => r.AssetInstanceId == assetId);
 
@@ -216,6 +220,7 @@ public class AssetLifecycleService
 
             var buyer = await _db.Users.FirstOrDefaultAsync(u => u.Id == dto.SoldToUserId, ct)
                 ?? throw new DomainException("Buyer not found.");
+            if (_scope.IsManager) await _scope.EnsureDepartmentAccessAsync(buyer.DepartmentId, ct);
             if (!buyer.IsActive)
                 throw new DomainException("Buyer is not active.");
         }
@@ -266,6 +271,13 @@ public class AssetLifecycleService
         DisposalType? type, PageQuery page, CancellationToken ct)
     {
         var query = _db.AssetDisposals.AsNoTracking();
+        if (_scope.IsManager)
+        {
+            var departments = await _scope.GetDepartmentIdsAsync(ct);
+            query = query.Where(d => _db.Allocations.Any(a =>
+                a.AssetInstanceId == d.AssetInstanceId && a.User.DepartmentId != null &&
+                departments.Contains(a.User.DepartmentId.Value)));
+        }
         if (type is not null)
             query = query.Where(d => d.DisposalType == type);
 
@@ -281,9 +293,14 @@ public class AssetLifecycleService
 
     // ---------- helpers ----------
 
-    private async Task<AssetInstance> GetAssetAsync(Guid id, CancellationToken ct) =>
-        await _db.AssetInstances.FirstOrDefaultAsync(a => a.Id == id, ct)
-        ?? throw new DomainException("Asset not found.");
+    private async Task<AssetInstance> GetAssetAsync(Guid id, CancellationToken ct)
+    {
+        var asset = await _db.AssetInstances.Include(a => a.CurrentHolder)
+            .FirstOrDefaultAsync(a => a.Id == id, ct) ?? throw new DomainException("Asset not found.");
+        if (_scope.IsManager && asset.CurrentHolderId is not null)
+            await _scope.EnsureDepartmentAccessAsync(asset.CurrentHolder?.DepartmentId, ct);
+        return asset;
+    }
 
     private async Task<MaintenanceRecordDto> GetMaintenanceRecordAsync(Guid id, CancellationToken ct) =>
         await _db.MaintenanceRecords.AsNoTracking()

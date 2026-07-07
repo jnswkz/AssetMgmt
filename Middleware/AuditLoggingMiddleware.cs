@@ -65,6 +65,9 @@ public class AuditLoggingMiddleware
 
     private async Task WriteAuditAsync(HttpContext context, Exception? exception)
     {
+        if (context.RequestAborted.IsCancellationRequested)
+            return;
+
         try
         {
             var req = context.Request;

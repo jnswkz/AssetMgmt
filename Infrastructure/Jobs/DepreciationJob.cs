@@ -93,7 +93,8 @@ public class DepreciationJob
     private async Task<DepreciationLedger?> BuildEntryAsync(
         AssetInstance asset, DepreciationPolicy policy, DateTime period, CancellationToken ct)
     {
-        var salvage = Round(asset.AcquisitionCost * (policy.SalvageValuePercent / 100m));
+        var salvage = Math.Max(asset.SalvageValue,
+            Round(asset.AcquisitionCost * (policy.SalvageValuePercent / 100m)));
 
         // Carry forward from the most recent prior period, else start at cost.
         var prior = await _db.DepreciationLedger.AsNoTracking()

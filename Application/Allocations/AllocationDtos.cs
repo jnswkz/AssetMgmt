@@ -12,6 +12,7 @@ public record AllocationHistoryItem(
     AllocationEventType EventType,
     DateTime StartDate,
     DateTime? EndDate,
+    DateTime? ExpectedReturnAt,
     Guid? AllocationRequestId,
     string? Notes,
     DateTime CreatedAt);
@@ -23,6 +24,7 @@ public record MyAssetItem(
     AssetStatus Status,
     string? Location,
     DateTime StartDate,
+    DateTime? ExpectedReturnAt,
     Guid? AllocationRequestId,
     string? HandoverDocumentNumber,
     string? HandoverFilePath,

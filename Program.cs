@@ -4,9 +4,12 @@ using AssetMgmt.Application.Agents;
 using AssetMgmt.Application.Assets;
 using AssetMgmt.Application.Auth;
 using AssetMgmt.Application.Departments;
+using AssetMgmt.Application.Depreciation;
 using AssetMgmt.Application.Handover;
+using AssetMgmt.Application.Inventory;
 using AssetMgmt.Application.Reports;
 using AssetMgmt.Application.Requests;
+using AssetMgmt.Application.Returns;
 using AssetMgmt.Application.Users;
 using AssetMgmt.Infrastructure.Jobs;
 using AssetMgmt.Infrastructure.Persistence;
@@ -61,7 +64,10 @@ builder.Services.AddCors(options =>
 var connectionString = BuildConnectionString(builder.Configuration);
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(connectionString));
+    options.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure(
+        maxRetryCount: 3,
+        maxRetryDelay: TimeSpan.FromSeconds(5),
+        errorNumbersToAdd: null)));
 
 // --- Auth configuration ---
 var jwtOptions = new JwtOptions();
@@ -73,6 +79,7 @@ builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(jwtOpt
 builder.Services.AddScoped<IPasswordHasher, BCryptPasswordHasher>();
 builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
+builder.Services.AddScoped<AssetMgmt.Application.Common.DataScopeService>();
 builder.Services.AddScoped<AuthService>();
 
 // --- Feature services (Days 3-5) ---
@@ -84,6 +91,9 @@ builder.Services.AddScoped<AllocationHistoryService>();
 builder.Services.AddScoped<AssetLifecycleService>();
 builder.Services.AddScoped<UserAdminService>();
 builder.Services.AddScoped<DepartmentService>();
+builder.Services.AddScoped<DepreciationService>();
+builder.Services.AddScoped<ReturnObligationService>();
+builder.Services.AddScoped<InventoryScanService>();
 builder.Services.AddScoped<AiAssetAccessService>();
 builder.Services.AddScoped<AiConversationStore>();
 builder.Services.AddScoped<AiOperationsService>();

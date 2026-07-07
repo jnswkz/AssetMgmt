@@ -26,7 +26,7 @@ public class AllocationsController : ControllerBase
         => Ok(await _service.ListAsync(assetId, userId, new PageQuery(page, pageSize), ct));
 
     [HttpGet("assets/{assetId:guid}/history")]
-    [Authorize(Policy = "RequireEmployee")]
+    [Authorize(Policy = "RequireManager")]
     public async Task<ActionResult<PagedResult<AllocationHistoryItem>>> AssetHistory(
         Guid assetId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken ct = default)
         => Ok(await _service.ListAsync(assetId, null, new PageQuery(page, pageSize), ct));

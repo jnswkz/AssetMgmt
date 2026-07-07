@@ -13,18 +13,27 @@ public class UserAdminService
     private readonly AppDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IPasswordHasher _hasher;
+    private readonly DataScopeService _scope;
 
-    public UserAdminService(AppDbContext db, ICurrentUser currentUser, IPasswordHasher hasher)
+    public UserAdminService(AppDbContext db, ICurrentUser currentUser, IPasswordHasher hasher,
+        DataScopeService scope)
     {
         _db = db;
         _currentUser = currentUser;
         _hasher = hasher;
+        _scope = scope;
     }
 
     public async Task<PagedResult<UserListItem>> ListAsync(
         UserRole? role, Guid? departmentId, bool? isActive, string? search, PageQuery page, CancellationToken ct)
     {
         var query = _db.Users.AsNoTracking();
+
+        if (_scope.IsManager)
+        {
+            var departments = await _scope.GetDepartmentIdsAsync(ct);
+            query = query.Where(u => u.DepartmentId != null && departments.Contains(u.DepartmentId.Value));
+        }
 
         if (role is not null) query = query.Where(u => u.Role == role);
         if (departmentId is not null) query = query.Where(u => u.DepartmentId == departmentId);
@@ -56,6 +65,8 @@ public class UserAdminService
             .Include(x => x.Department)
             .FirstOrDefaultAsync(x => x.Id == id, ct)
             ?? throw new DomainException("User not found.");
+        if (_scope.IsManager)
+            await _scope.EnsureDepartmentAccessAsync(u.DepartmentId, ct);
         return Map(u);
     }
 
@@ -109,12 +120,19 @@ public class UserAdminService
 
         await EnsureDepartmentExistsAsync(req.DepartmentId, ct);
 
+        var departmentChanged = user.DepartmentId != req.DepartmentId;
+        var deactivated = user.IsActive && !req.IsActive;
+
         user.Email = req.Email.Trim();
         user.NormalizedEmail = normalizedEmail;
         user.FullName = req.FullName.Trim();
         user.Role = req.Role;
         user.DepartmentId = req.DepartmentId;
         user.IsActive = req.IsActive;
+
+        if (deactivated || departmentChanged)
+            await CreateReturnObligationsAsync(user.Id,
+                deactivated ? ReturnObligationReason.UserDeactivated : ReturnObligationReason.DepartmentChanged, ct);
 
         await _db.SaveChangesAsync(ct);
         return await GetByIdAsync(user.Id, ct);
@@ -143,9 +161,9 @@ public class UserAdminService
             throw new DomainException("You cannot deactivate your own account.");
 
         user.IsActive = false;
-        user.DeletedAt = DateTime.UtcNow;
         // Rotate stamp to revoke any active sessions.
         user.SecurityStamp = Guid.NewGuid().ToString("N");
+        await CreateReturnObligationsAsync(user.Id, ReturnObligationReason.UserDeactivated, ct);
         await _db.SaveChangesAsync(ct);
     }
 
@@ -154,6 +172,29 @@ public class UserAdminService
         if (departmentId is null) return;
         if (!await _db.Departments.AnyAsync(d => d.Id == departmentId, ct))
             throw new DomainException("Department not found.");
+    }
+
+    private async Task CreateReturnObligationsAsync(
+        Guid userId, ReturnObligationReason reason, CancellationToken ct)
+    {
+        var openAssetIds = await _db.ReturnObligations
+            .Where(o => o.UserId == userId && o.ResolvedAt == null)
+            .Select(o => o.AssetInstanceId)
+            .ToListAsync(ct);
+        var heldAssetIds = await _db.AssetInstances
+            .Where(a => a.CurrentHolderId == userId && a.Status == AssetStatus.Allocated &&
+                        !openAssetIds.Contains(a.Id))
+            .Select(a => a.Id)
+            .ToListAsync(ct);
+        var dueAt = DateTime.UtcNow.AddDays(3);
+        foreach (var assetId in heldAssetIds)
+            _db.ReturnObligations.Add(new ReturnObligation
+            {
+                UserId = userId,
+                AssetInstanceId = assetId,
+                Reason = reason,
+                DueAt = dueAt
+            });
     }
 
     private static UserDto Map(User u) => new(

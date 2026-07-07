@@ -10,6 +10,7 @@ public class Allocation
     public AllocationEventType EventType { get; set; }
     public DateTime StartDate { get; set; }
     public DateTime? EndDate { get; set; }
+    public DateTime? ExpectedReturnAt { get; set; }
     public Guid? FromUserId { get; set; }
     public Guid? ToUserId { get; set; }
     public Guid? AllocationRequestId { get; set; }

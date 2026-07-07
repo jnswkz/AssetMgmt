@@ -1,5 +1,6 @@
 using AssetMgmt.Application.Assets;
 using FluentValidation;
+using System.Text.Json;
 
 namespace AssetMgmt.Application.Validation;
 
@@ -15,6 +16,8 @@ public class CreateAssetModelRequestValidator : AbstractValidator<CreateAssetMod
             .GreaterThan(0).When(x => x.DefaultUsefulLifeMonths.HasValue);
         RuleFor(x => x.DefaultDepreciationMethod)
             .IsInEnum().When(x => x.DefaultDepreciationMethod.HasValue);
+        RuleFor(x => x.Specs).Must(JsonValidation.BeObject).When(x => !string.IsNullOrWhiteSpace(x.Specs))
+            .WithMessage("Specs must be a valid JSON object.");
     }
 }
 
@@ -28,6 +31,24 @@ public class UpdateAssetModelRequestValidator : AbstractValidator<UpdateAssetMod
         RuleFor(x => x.ModelNumber).MaximumLength(200);
         RuleFor(x => x.DefaultUsefulLifeMonths).GreaterThan(0);
         RuleFor(x => x.DefaultDepreciationMethod).IsInEnum();
+        RuleFor(x => x.Specs).Must(JsonValidation.BeObject).When(x => !string.IsNullOrWhiteSpace(x.Specs))
+            .WithMessage("Specs must be a valid JSON object.");
+    }
+}
+
+internal static class JsonValidation
+{
+    public static bool BeObject(string? value)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(value!);
+            return document.RootElement.ValueKind == JsonValueKind.Object;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 }
 

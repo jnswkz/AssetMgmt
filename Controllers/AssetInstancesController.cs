@@ -22,12 +22,20 @@ public class AssetInstancesController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = "RequireManager")]
     public async Task<ActionResult<PagedResult<AssetInstanceListItem>>> List(
         [FromQuery] AssetStatus? status, [FromQuery] Guid? modelId, [FromQuery] string? search,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken ct = default)
         => Ok(await _service.ListAsync(status, modelId, search, new PageQuery(page, pageSize), ct));
 
+    [HttpGet("available")]
+    [Authorize(Policy = "RequireEmployee")]
+    public async Task<ActionResult<IReadOnlyList<AvailableAssetItem>>> Available(
+        [FromQuery] string? search, CancellationToken ct)
+        => Ok(await _service.ListAvailableAsync(search, ct));
+
     [HttpGet("{id:guid}")]
+    [Authorize(Policy = "RequireManager")]
     public async Task<ActionResult<AssetInstanceDto>> Get(Guid id, CancellationToken ct)
         => Ok(await _service.GetByIdAsync(id, ct));
 

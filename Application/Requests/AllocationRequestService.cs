@@ -11,18 +11,21 @@ namespace AssetMgmt.Application.Requests;
 
 public class AllocationRequestService
 {
-    private static readonly TimeSpan LockTtl = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan LockTtl = TimeSpan.FromHours(24);
 
     private readonly AppDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IHandoverDocumentService _handover;
+    private readonly DataScopeService _scope;
 
     public AllocationRequestService(
-        AppDbContext db, ICurrentUser currentUser, IHandoverDocumentService handover)
+        AppDbContext db, ICurrentUser currentUser, IHandoverDocumentService handover,
+        DataScopeService scope)
     {
         _db = db;
         _currentUser = currentUser;
         _handover = handover;
+        _scope = scope;
     }
 
     private Guid CurrentUserId =>
@@ -37,16 +40,18 @@ public class AllocationRequestService
 
         var requesterId = CurrentUserId;
 
-        // Idempotency: return the existing request if the same key was already used.
+        // Idempotency is requester-scoped so a guessed key cannot expose another user's request.
         var existing = await _db.AllocationRequests
-            .FirstOrDefaultAsync(r => r.IdempotencyKey == req.IdempotencyKey, ct);
+            .FirstOrDefaultAsync(r => r.IdempotencyKey == req.IdempotencyKey && r.RequesterId == requesterId, ct);
         if (existing is not null)
             return await GetByIdAsync(existing.Id, ct);
 
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
         try
         {
-            var asset = await _db.AssetInstances.FirstOrDefaultAsync(a => a.Id == req.AssetInstanceId, ct)
+            var asset = await _db.AssetInstances.AsNoTracking()
+                .Select(a => new { a.Id, a.Status, a.LockExpiresAt, a.RowVersion })
+                .FirstOrDefaultAsync(a => a.Id == req.AssetInstanceId, ct)
                 ?? throw new DomainException("Asset not found.");
 
             if (asset.Status != AssetStatus.InStock)
@@ -55,13 +60,20 @@ public class AllocationRequestService
             var now = DateTime.UtcNow;
             var lockToken = Guid.NewGuid().ToString("N");
 
-            // Temp-lock the asset. CK_asset_instances_holder_status requires a holder for LockedTemp.
-            asset.Status = AssetStatus.LockedTemp;
-            asset.CurrentHolderId = requesterId;
-            asset.LockToken = lockToken;
-            asset.LockExpiresAt = now.Add(LockTtl);
-            asset.LockHolderUserId = requesterId;
-            asset.UpdatedBy = requesterId;
+            var lockExpiresAt = now.Add(LockTtl);
+            var locked = await _db.AssetInstances
+                .Where(a => a.Id == asset.Id && a.Status == AssetStatus.InStock &&
+                            (a.LockExpiresAt == null || a.LockExpiresAt <= now) &&
+                            a.RowVersion == asset.RowVersion)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(a => a.Status, AssetStatus.LockedTemp)
+                    .SetProperty(a => a.CurrentHolderId, requesterId)
+                    .SetProperty(a => a.LockToken, lockToken)
+                    .SetProperty(a => a.LockExpiresAt, lockExpiresAt)
+                    .SetProperty(a => a.LockHolderUserId, requesterId)
+                    .SetProperty(a => a.UpdatedBy, requesterId), ct);
+            if (locked != 1)
+                throw new ConflictException("Asset was just reserved or changed. Refresh and try another available asset.");
 
             var request = new AllocationRequest
             {
@@ -72,7 +84,10 @@ public class AllocationRequestService
                 ExpectedDurationMonths = req.ExpectedDurationMonths,
                 IdempotencyKey = req.IdempotencyKey,
                 LockToken = lockToken,
-                LockExpiresAt = now.Add(LockTtl)
+                LockExpiresAt = lockExpiresAt,
+                HandoverDueAt = lockExpiresAt,
+                CreatedAt = now,
+                UpdatedAt = now
             };
             _db.AllocationRequests.Add(request);
 
@@ -92,7 +107,7 @@ public class AllocationRequestService
             _db.ChangeTracker.Clear();
 
             var request = await _db.AllocationRequests.AsNoTracking()
-                .FirstOrDefaultAsync(r => r.IdempotencyKey == req.IdempotencyKey, ct);
+                .FirstOrDefaultAsync(r => r.IdempotencyKey == req.IdempotencyKey && r.RequesterId == requesterId, ct);
             if (request is not null)
                 return await GetByIdAsync(request.Id, ct);
 
@@ -104,6 +119,13 @@ public class AllocationRequestService
     {
         var query = _db.AllocationRequests.AsNoTracking()
             .Where(r => r.Status == RequestStatus.Pending);
+
+        if (_scope.IsManager)
+        {
+            var departments = await _scope.GetDepartmentIdsAsync(ct);
+            query = query.Where(r => r.Requester.DepartmentId != null &&
+                                     departments.Contains(r.Requester.DepartmentId.Value));
+        }
 
         var total = await query.CountAsync(ct);
         var items = await query
@@ -140,12 +162,19 @@ public class AllocationRequestService
             .FirstOrDefaultAsync(x => x.Id == id, ct)
             ?? throw new DomainException("Request not found.");
 
+        if (r.RequesterId != CurrentUserId && !_scope.IsAdmin)
+        {
+            if (!_scope.IsManager)
+                throw new DomainException("Request not found.");
+            await _scope.EnsureDepartmentAccessAsync(r.Requester.DepartmentId, ct);
+        }
+
         return new AllocationRequestDto(
             r.Id, r.RequesterId, r.Requester.FullName,
             r.AssetInstanceId, r.AssetInstance.AssetCode, r.AssetInstance.Model.Name,
             r.Status, r.Reason, r.ExpectedDurationMonths,
             r.ApproverId, r.Approver?.FullName, r.ApprovedAt, r.RejectedReason,
-            r.LockExpiresAt, r.CreatedAt, r.UpdatedAt);
+            r.LockExpiresAt, r.HandoverDueAt, r.CreatedAt, r.UpdatedAt);
     }
 
     // ---------- Day 5: approve / reject ----------
@@ -158,6 +187,7 @@ public class AllocationRequestService
         {
             var request = await _db.AllocationRequests.FirstOrDefaultAsync(r => r.Id == id, ct)
                 ?? throw new DomainException("Request not found.");
+            await EnsureManagerCanActAsync(request.RequesterId, ct);
             if (request.Status != RequestStatus.Pending)
                 throw new DomainException("Only pending requests can be approved.");
 
@@ -186,6 +216,7 @@ public class AllocationRequestService
                 UserId = request.RequesterId,
                 EventType = AllocationEventType.Allocated,
                 StartDate = now,
+                ExpectedReturnAt = request.ExpectedDurationMonths is { } months ? now.AddMonths(months) : null,
                 AllocationRequestId = request.Id,
                 CreatedBy = approverId
             };
@@ -216,6 +247,7 @@ public class AllocationRequestService
         {
             var request = await _db.AllocationRequests.FirstOrDefaultAsync(r => r.Id == id, ct)
                 ?? throw new DomainException("Request not found.");
+            await EnsureManagerCanActAsync(request.RequesterId, ct);
             if (request.Status != RequestStatus.Pending)
                 throw new DomainException("Only pending requests can be rejected.");
 
@@ -269,5 +301,15 @@ public class AllocationRequestService
         r => new RequestListItem(
             r.Id, r.RequesterId, r.Requester.FullName,
             r.AssetInstanceId, r.AssetInstance.AssetCode, r.AssetInstance.Model.Name,
-            r.Status, r.ExpectedDurationMonths, r.LockExpiresAt, r.CreatedAt);
+            r.Status, r.ExpectedDurationMonths, r.LockExpiresAt, r.HandoverDueAt, r.CreatedAt);
+
+    private async Task EnsureManagerCanActAsync(Guid requesterId, CancellationToken ct)
+    {
+        if (_scope.IsAdmin) return;
+        var departmentId = await _db.Users.AsNoTracking()
+            .Where(u => u.Id == requesterId)
+            .Select(u => u.DepartmentId)
+            .SingleAsync(ct);
+        await _scope.EnsureDepartmentAccessAsync(departmentId, ct);
+    }
 }

@@ -29,7 +29,12 @@ COUNT=$("${SQLCMD[@]}" -h -1 -W -Q \
   2>/dev/null | tr -d '[:space:]' || echo 0)
 
 if [ "${COUNT:-0}" -gt 0 ]; then
-  echo "db-init: AssetMgmt already initialized (${COUNT} users). Skipping."
+  echo "db-init: AssetMgmt already initialized (${COUNT} users). Applying idempotent upgrades."
+  for script in /sql/002_*.sql /sql/003_*.sql /sql/004_*.sql; do
+    [ -f "$script" ] || continue
+    echo "db-init: running $(basename "$script") ..."
+    "${SQLCMD[@]}" -b -i "$script"
+  done
   exit 0
 fi
 

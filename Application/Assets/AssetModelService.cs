@@ -110,7 +110,7 @@ public class AssetModelService
     }
 
     private static AssetModelDto Map(AssetModel m) => new(
-        m.Id, m.Name, m.Category, m.Manufacturer, m.ModelNumber, m.Specs,
+        m.Id, m.Name, m.Category, m.Manufacturer, m.ModelNumber, m.Specs, m.Specs,
         m.DefaultUsefulLifeMonths, m.DefaultDepreciationMethod, m.ImageUrl,
         m.CreatedAt, m.UpdatedAt);
 }

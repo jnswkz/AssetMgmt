@@ -16,6 +16,7 @@ public class AllocationConfiguration : IEntityTypeConfiguration<Allocation>
         b.Property(x => x.EventType).HasColumnName("event_type").HasMaxLength(50).HasConversion<string>().IsRequired();
         b.Property(x => x.StartDate).HasColumnName("start_date").HasColumnType("date");
         b.Property(x => x.EndDate).HasColumnName("end_date").HasColumnType("date");
+        b.Property(x => x.ExpectedReturnAt).HasColumnName("expected_return_at");
         b.Property(x => x.FromUserId).HasColumnName("from_user_id");
         b.Property(x => x.ToUserId).HasColumnName("to_user_id");
         b.Property(x => x.AllocationRequestId).HasColumnName("allocation_request_id");

@@ -20,6 +20,7 @@ public record RequestListItem(
     RequestStatus Status,
     int? ExpectedDurationMonths,
     DateTime? LockExpiresAt,
+    DateTime HandoverDueAt,
     DateTime CreatedAt);
 
 public record AllocationRequestDto(
@@ -37,5 +38,6 @@ public record AllocationRequestDto(
     DateTime? ApprovedAt,
     string? RejectedReason,
     DateTime? LockExpiresAt,
+    DateTime HandoverDueAt,
     DateTime CreatedAt,
     DateTime UpdatedAt);

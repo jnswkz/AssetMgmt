@@ -31,3 +31,29 @@ public record IdleAssetItem(
     DateTime AcquisitionDate,
     DateTime? LastActivityAt,
     int IdleMonths);
+
+public record AssetMatrixItem(
+    Guid AssetInstanceId,
+    string AssetCode,
+    string ModelName,
+    AssetCategory Category,
+    AssetStatus Status,
+    string? Location,
+    Guid? HolderId,
+    string? HolderName,
+    Guid? DepartmentId,
+    string? DepartmentName);
+
+public record AllocationTimelineItem(
+    Guid AllocationId,
+    Guid AssetInstanceId,
+    string AssetCode,
+    string ModelName,
+    Guid UserId,
+    string UserName,
+    Guid? DepartmentId,
+    string? DepartmentName,
+    AllocationEventType EventType,
+    DateTime StartDate,
+    DateTime? EndDate,
+    DateTime? ExpectedReturnAt);

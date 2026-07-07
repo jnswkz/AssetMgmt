@@ -29,4 +29,8 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="AssetMgmt.Tests/**/*.cs" />
+  </ItemGroup>
+
 </Project>

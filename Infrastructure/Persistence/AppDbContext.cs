@@ -19,6 +19,9 @@ public class AppDbContext : DbContext
     public DbSet<MaintenanceRecord> MaintenanceRecords => Set<MaintenanceRecord>();
     public DbSet<AssetDisposal> AssetDisposals => Set<AssetDisposal>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<ReturnObligation> ReturnObligations => Set<ReturnObligation>();
+    public DbSet<InventoryScan> InventoryScans => Set<InventoryScan>();
+    public DbSet<InventoryScanItem> InventoryScanItems => Set<InventoryScanItem>();
     public DbSet<AiAgentConversation> AiAgentConversations => Set<AiAgentConversation>();
     public DbSet<AiAgentMessage> AiAgentMessages => Set<AiAgentMessage>();
 

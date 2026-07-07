@@ -19,6 +19,7 @@ public class AllocationRequestConfiguration : IEntityTypeConfiguration<Allocatio
         b.Property(x => x.IdempotencyKey).HasColumnName("idempotency_key").HasMaxLength(100).IsRequired();
         b.Property(x => x.LockToken).HasColumnName("lock_token").HasMaxLength(100);
         b.Property(x => x.LockExpiresAt).HasColumnName("lock_expires_at");
+        b.Property(x => x.HandoverDueAt).HasColumnName("handover_due_at");
         b.Property(x => x.ApproverId).HasColumnName("approver_id");
         b.Property(x => x.ApprovedAt).HasColumnName("approved_at");
         b.Property(x => x.RejectedReason).HasColumnName("rejected_reason");

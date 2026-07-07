@@ -34,6 +34,15 @@ public class ExceptionHandlingMiddleware
             await WriteProblem(context, StatusCodes.Status409Conflict,
                 "Conflict", "The record was changed by another action. Refresh and try again.");
         }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            // The client disconnected or cancelled an in-flight request. This is not an
+            // application failure and writing a response to the closed connection is futile.
+            _logger.LogDebug("Request was cancelled by the client: {Method} {Path}",
+                context.Request.Method, context.Request.Path);
+            if (!context.Response.HasStarted)
+                context.Response.StatusCode = 499; // conventional "Client Closed Request"
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unhandled exception");

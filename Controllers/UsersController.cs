@@ -8,7 +8,7 @@ namespace AssetMgmt.Controllers;
 
 [ApiController]
 [Route("api/users")]
-[Authorize(Policy = "RequireAdminIT")]
+[Authorize(Policy = "RequireManager")]
 public class UsersController : ControllerBase
 {
     private readonly UserAdminService _service;
@@ -30,6 +30,7 @@ public class UsersController : ControllerBase
         => Ok(await _service.GetByIdAsync(id, ct));
 
     [HttpPost]
+    [Authorize(Policy = "RequireAdminIT")]
     public async Task<ActionResult<UserDto>> Create(CreateUserRequest req, CancellationToken ct)
     {
         var created = await _service.CreateAsync(req, ct);
@@ -37,10 +38,12 @@ public class UsersController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Policy = "RequireAdminIT")]
     public async Task<ActionResult<UserDto>> Update(Guid id, UpdateUserRequest req, CancellationToken ct)
         => Ok(await _service.UpdateAsync(id, req, ct));
 
     [HttpPost("{id:guid}/reset-password")]
+    [Authorize(Policy = "RequireAdminIT")]
     public async Task<IActionResult> ResetPassword(Guid id, ResetPasswordRequest req, CancellationToken ct)
     {
         await _service.ResetPasswordAsync(id, req.NewPassword, ct);
@@ -48,6 +51,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = "RequireAdminIT")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
         await _service.DeactivateAsync(id, ct);

@@ -8,7 +8,7 @@ namespace AssetMgmt.Controllers;
 
 [ApiController]
 [Route("api/asset-models")]
-[Authorize(Policy = "RequireEmployee")]
+[Authorize(Policy = "RequireManager")]
 public class AssetModelsController : ControllerBase
 {
     private readonly AssetModelService _service;

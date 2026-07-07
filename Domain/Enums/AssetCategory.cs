@@ -9,5 +9,6 @@ public enum AssetCategory
     Peripheral,
     Printer,
     NetworkDevice,
-    Other
+    Other,
+    SoftwareLicense
 }

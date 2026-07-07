@@ -13,6 +13,7 @@ public class AllocationRequest
     public string IdempotencyKey { get; set; } = null!;
     public string? LockToken { get; set; }
     public DateTime? LockExpiresAt { get; set; }
+    public DateTime HandoverDueAt { get; set; }
     public Guid? ApproverId { get; set; }
     public DateTime? ApprovedAt { get; set; }
     public string? RejectedReason { get; set; }

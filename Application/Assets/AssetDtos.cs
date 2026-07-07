@@ -20,6 +20,7 @@ public record AssetModelDto(
     string? Manufacturer,
     string? ModelNumber,
     string? Specs,
+    string? SpecsJson,
     int DefaultUsefulLifeMonths,
     DepreciationMethod DefaultDepreciationMethod,
     string? ImageUrl,
@@ -60,6 +61,15 @@ public record AssetInstanceListItem(
     string? Location,
     string? QrCodePath,
     string? QrCodeUrl);
+
+public record AvailableAssetItem(
+    Guid Id,
+    string AssetCode,
+    Guid ModelId,
+    string ModelName,
+    AssetCategory Category,
+    string? SpecsSummary,
+    string? Location);
 
 public record AssetInstanceDto(
     Guid Id,

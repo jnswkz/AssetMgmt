@@ -15,23 +15,33 @@ public class AllocationHistoryService
     private readonly ICurrentUser _currentUser;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IHandoverDocumentService _handover;
+    private readonly DataScopeService _scope;
 
     public AllocationHistoryService(
         AppDbContext db,
         ICurrentUser currentUser,
         IHttpContextAccessor httpContextAccessor,
-        IHandoverDocumentService handover)
+        IHandoverDocumentService handover,
+        DataScopeService scope)
     {
         _db = db;
         _currentUser = currentUser;
         _httpContextAccessor = httpContextAccessor;
         _handover = handover;
+        _scope = scope;
     }
 
     public async Task<PagedResult<AllocationHistoryItem>> ListAsync(
         Guid? assetId, Guid? userId, PageQuery page, CancellationToken ct)
     {
         var query = _db.Allocations.AsNoTracking();
+
+        if (_scope.IsManager)
+        {
+            var departments = await _scope.GetDepartmentIdsAsync(ct);
+            query = query.Where(a => a.User.DepartmentId != null &&
+                                     departments.Contains(a.User.DepartmentId.Value));
+        }
 
         if (assetId is not null)
             query = query.Where(a => a.AssetInstanceId == assetId);
@@ -44,7 +54,7 @@ public class AllocationHistoryService
             .Skip(page.Skip).Take(page.NormalizedPageSize)
             .Select(a => new AllocationHistoryItem(
                 a.Id, a.AssetInstanceId, a.AssetInstance.AssetCode, a.AssetInstance.Model.Name,
-                a.UserId, a.User.FullName, a.EventType, a.StartDate, a.EndDate,
+                a.UserId, a.User.FullName, a.EventType, a.StartDate, a.EndDate, a.ExpectedReturnAt,
                 a.AllocationRequestId, a.Notes, a.CreatedAt))
             .ToListAsync(ct);
 
@@ -79,6 +89,7 @@ public class AllocationHistoryService
                 al.Id,
                 al.AssetInstanceId,
                 al.StartDate,
+                al.ExpectedReturnAt,
                 al.AllocationRequestId
             })
             .ToListAsync(ct);
@@ -117,6 +128,7 @@ public class AllocationHistoryService
                 a.Status,
                 a.Location,
                 allocation?.StartDate ?? default,
+                allocation?.ExpectedReturnAt,
                 allocation?.AllocationRequestId,
                 handover?.DocumentNumber,
                 handover?.FilePath,

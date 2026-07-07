@@ -6,7 +6,7 @@ namespace AssetMgmt.Infrastructure.Jobs;
 
 /// <summary>
 /// Recurring job (every 5 minutes) that reclaims assets whose temporary
-/// allocation lock has expired. A request is created with a 30-minute TTL
+/// allocation lock has expired. A request is created with a 24-hour TTL
 /// (see <c>AllocationRequestService</c>); if no manager approves in time we
 /// expire the request and return the asset to stock so others can request it.
 /// </summary>

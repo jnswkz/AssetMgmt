@@ -16,23 +16,34 @@ public class AssetInstanceService
     private readonly ICurrentUser _currentUser;
     private readonly IQrCodeService _qr;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly DataScopeService _scope;
 
     public AssetInstanceService(
         AppDbContext db,
         ICurrentUser currentUser,
         IQrCodeService qr,
-        IHttpContextAccessor httpContextAccessor)
+        IHttpContextAccessor httpContextAccessor,
+        DataScopeService scope)
     {
         _db = db;
         _currentUser = currentUser;
         _qr = qr;
         _httpContextAccessor = httpContextAccessor;
+        _scope = scope;
     }
 
     public async Task<PagedResult<AssetInstanceListItem>> ListAsync(
         AssetStatus? status, Guid? modelId, string? search, PageQuery page, CancellationToken ct)
     {
         var query = _db.AssetInstances.AsNoTracking();
+
+        if (_scope.IsManager)
+        {
+            var departments = await _scope.GetDepartmentIdsAsync(ct);
+            query = query.Where(a => a.CurrentHolderId == null ||
+                (a.CurrentHolder != null && a.CurrentHolder.DepartmentId != null &&
+                 departments.Contains(a.CurrentHolder.DepartmentId.Value)));
+        }
 
         if (status is not null)
             query = query.Where(a => a.Status == status);
@@ -74,9 +85,49 @@ public class AssetInstanceService
         return new PagedResult<AssetInstanceListItem>(items, total, page.NormalizedPage, page.NormalizedPageSize);
     }
 
+    public async Task<IReadOnlyList<AvailableAssetItem>> ListAvailableAsync(string? search, CancellationToken ct)
+    {
+        var query = _db.AssetInstances.AsNoTracking().Where(a => a.Status == AssetStatus.InStock);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim();
+            query = query.Where(a => EF.Functions.Like(a.AssetCode, $"%{term}%") ||
+                                     EF.Functions.Like(a.Model.Name, $"%{term}%"));
+        }
+
+        // Keep string truncation out of the SQL projection. The previous
+        // Substring/Math.Min expression is not translated consistently by EF8
+        // for SQL Server and could fail the entire employee dashboard request.
+        var rows = await query.OrderBy(a => a.AssetCode).Take(200)
+            .Select(a => new
+            {
+                a.Id,
+                a.AssetCode,
+                a.ModelId,
+                ModelName = a.Model.Name,
+                a.Model.Category,
+                a.Model.Specs,
+                a.Location
+            })
+            .ToListAsync(ct);
+
+        return rows.Select(a => new AvailableAssetItem(
+            a.Id, a.AssetCode, a.ModelId, a.ModelName, a.Category,
+            a.Specs is { Length: > 160 } ? a.Specs[..160] : a.Specs,
+            a.Location)).ToList();
+    }
+
     public async Task<AssetInstanceDto> GetByIdAsync(Guid id, CancellationToken ct)
     {
-        var a = await _db.AssetInstances.AsNoTracking()
+        var query = _db.AssetInstances.AsNoTracking();
+        if (_scope.IsManager)
+        {
+            var departments = await _scope.GetDepartmentIdsAsync(ct);
+            query = query.Where(a => a.CurrentHolderId == null ||
+                (a.CurrentHolder != null && a.CurrentHolder.DepartmentId != null &&
+                 departments.Contains(a.CurrentHolder.DepartmentId.Value)));
+        }
+        var a = await query
             .Include(x => x.Model)
             .Include(x => x.CurrentHolder)
             .FirstOrDefaultAsync(x => x.Id == id, ct)

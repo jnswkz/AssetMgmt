@@ -1,5 +1,6 @@
 using AssetMgmt.Application.Common;
 using AssetMgmt.Application.Reports;
+using AssetMgmt.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -28,4 +29,15 @@ public class ReportsController : ControllerBase
         [FromQuery] int? idleMonths,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken ct = default)
         => Ok(await _service.GetIdleAssetsAsync(idleMonths, new PageQuery(page, pageSize), ct));
+
+    [HttpGet("asset-matrix")]
+    public async Task<ActionResult<IReadOnlyList<AssetMatrixItem>>> AssetMatrix(
+        [FromQuery] Guid? departmentId, [FromQuery] AssetStatus? status, CancellationToken ct)
+        => Ok(await _service.GetAssetMatrixAsync(departmentId, status, ct));
+
+    [HttpGet("allocation-timeline")]
+    public async Task<ActionResult<IReadOnlyList<AllocationTimelineItem>>> AllocationTimeline(
+        [FromQuery] DateTime? from, [FromQuery] DateTime? to,
+        [FromQuery] Guid? departmentId, CancellationToken ct)
+        => Ok(await _service.GetAllocationTimelineAsync(from, to, departmentId, ct));
 }

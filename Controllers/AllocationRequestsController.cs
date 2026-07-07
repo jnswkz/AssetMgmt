@@ -59,6 +59,7 @@ public class AllocationRequestsController : ControllerBase
     [Authorize(Policy = "RequireEmployee")]
     public async Task<ActionResult<HandoverResult>> GetHandover(Guid id, CancellationToken ct)
     {
+        await _service.GetByIdAsync(id, ct);
         var result = await _handover.GetForRequestAsync(id, ct);
         return result is not null ? Ok(result) : NotFound();
     }
