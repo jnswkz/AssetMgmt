@@ -21,7 +21,10 @@ public class LockTimeoutJob
         _logger = logger;
     }
 
-    public async Task RunAsync(CancellationToken ct = default)
+    public Task RunAsync(CancellationToken ct = default) =>
+        _db.ExecuteWithRetryStrategyAsync(() => RunCoreAsync(ct));
+
+    private async Task RunCoreAsync(CancellationToken ct)
     {
         var now = DateTime.UtcNow;
 

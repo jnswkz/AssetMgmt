@@ -26,7 +26,10 @@ public class AssetLifecycleService
 
     // ---------- Return (reclaim) ----------
 
-    public async Task ReturnAsync(Guid assetId, ReturnAssetDto dto, CancellationToken ct)
+    public Task ReturnAsync(Guid assetId, ReturnAssetDto dto, CancellationToken ct) =>
+        _db.ExecuteWithRetryStrategyAsync(() => ReturnCoreAsync(assetId, dto, ct));
+
+    private async Task ReturnCoreAsync(Guid assetId, ReturnAssetDto dto, CancellationToken ct)
     {
         var actor = CurrentUserId;
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
@@ -61,7 +64,10 @@ public class AssetLifecycleService
 
     // ---------- Transfer ----------
 
-    public async Task TransferAsync(Guid assetId, TransferAssetDto dto, CancellationToken ct)
+    public Task TransferAsync(Guid assetId, TransferAssetDto dto, CancellationToken ct) =>
+        _db.ExecuteWithRetryStrategyAsync(() => TransferCoreAsync(assetId, dto, ct));
+
+    private async Task TransferCoreAsync(Guid assetId, TransferAssetDto dto, CancellationToken ct)
     {
         var actor = CurrentUserId;
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
@@ -103,7 +109,10 @@ public class AssetLifecycleService
 
     // ---------- Maintenance ----------
 
-    public async Task<MaintenanceRecordDto> StartMaintenanceAsync(Guid assetId, StartMaintenanceDto dto, CancellationToken ct)
+    public Task<MaintenanceRecordDto> StartMaintenanceAsync(Guid assetId, StartMaintenanceDto dto, CancellationToken ct) =>
+        _db.ExecuteWithRetryStrategyAsync(() => StartMaintenanceCoreAsync(assetId, dto, ct));
+
+    private async Task<MaintenanceRecordDto> StartMaintenanceCoreAsync(Guid assetId, StartMaintenanceDto dto, CancellationToken ct)
     {
         var actor = CurrentUserId;
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
@@ -154,7 +163,11 @@ public class AssetLifecycleService
         return await GetMaintenanceRecordAsync(record.Id, ct);
     }
 
-    public async Task<MaintenanceRecordDto> CompleteMaintenanceAsync(
+    public Task<MaintenanceRecordDto> CompleteMaintenanceAsync(
+        Guid assetId, Guid recordId, CompleteMaintenanceDto dto, CancellationToken ct) =>
+        _db.ExecuteWithRetryStrategyAsync(() => CompleteMaintenanceCoreAsync(assetId, recordId, dto, ct));
+
+    private async Task<MaintenanceRecordDto> CompleteMaintenanceCoreAsync(
         Guid assetId, Guid recordId, CompleteMaintenanceDto dto, CancellationToken ct)
     {
         var actor = CurrentUserId;
@@ -202,7 +215,10 @@ public class AssetLifecycleService
 
     // ---------- Dispose / Sell ----------
 
-    public async Task<DisposalDto> DisposeAsync(Guid assetId, DisposeAssetDto dto, CancellationToken ct)
+    public Task<DisposalDto> DisposeAsync(Guid assetId, DisposeAssetDto dto, CancellationToken ct) =>
+        _db.ExecuteWithRetryStrategyAsync(() => DisposeCoreAsync(assetId, dto, ct));
+
+    private async Task<DisposalDto> DisposeCoreAsync(Guid assetId, DisposeAssetDto dto, CancellationToken ct)
     {
         var actor = CurrentUserId;
         await using var tx = await _db.Database.BeginTransactionAsync(ct);

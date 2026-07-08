@@ -61,7 +61,10 @@ public class AuthService
         return await IssueNewFamilyAsync(user, ct);
     }
 
-    public async Task<TokenResponse> RefreshAsync(RefreshRequest req, CancellationToken ct)
+    public Task<TokenResponse> RefreshAsync(RefreshRequest req, CancellationToken ct) =>
+        _db.ExecuteWithRetryStrategyAsync(() => RefreshCoreAsync(req, ct));
+
+    private async Task<TokenResponse> RefreshCoreAsync(RefreshRequest req, CancellationToken ct)
     {
         var validated = _tokens.ValidateRefreshToken(req.RefreshToken)
             ?? throw InvalidRefresh();

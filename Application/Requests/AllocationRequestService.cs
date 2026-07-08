@@ -33,7 +33,10 @@ public class AllocationRequestService
 
     // ---------- Day 4: create + temp lock ----------
 
-    public async Task<AllocationRequestDto> CreateAsync(CreateRequestDto req, CancellationToken ct)
+    public Task<AllocationRequestDto> CreateAsync(CreateRequestDto req, CancellationToken ct) =>
+        _db.ExecuteWithRetryStrategyAsync(() => CreateCoreAsync(req, ct));
+
+    private async Task<AllocationRequestDto> CreateCoreAsync(CreateRequestDto req, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(req.IdempotencyKey))
             throw new DomainException("IdempotencyKey is required.");
@@ -179,7 +182,10 @@ public class AllocationRequestService
 
     // ---------- Day 5: approve / reject ----------
 
-    public async Task<AllocationRequestDto> ApproveAsync(Guid id, CancellationToken ct)
+    public Task<AllocationRequestDto> ApproveAsync(Guid id, CancellationToken ct) =>
+        _db.ExecuteWithRetryStrategyAsync(() => ApproveCoreAsync(id, ct));
+
+    private async Task<AllocationRequestDto> ApproveCoreAsync(Guid id, CancellationToken ct)
     {
         var approverId = CurrentUserId;
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
@@ -239,7 +245,10 @@ public class AllocationRequestService
         }
     }
 
-    public async Task<AllocationRequestDto> RejectAsync(Guid id, string reason, CancellationToken ct)
+    public Task<AllocationRequestDto> RejectAsync(Guid id, string reason, CancellationToken ct) =>
+        _db.ExecuteWithRetryStrategyAsync(() => RejectCoreAsync(id, reason, ct));
+
+    private async Task<AllocationRequestDto> RejectCoreAsync(Guid id, string reason, CancellationToken ct)
     {
         var approverId = CurrentUserId;
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
