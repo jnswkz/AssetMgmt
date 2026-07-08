@@ -50,8 +50,13 @@ services:
       DB_TRUST_CERT: "${DB_TRUST_CERT:-True}"
       JWT_SECRET: "${JWT_SECRET}"
       SEED_DEFAULT_PASSWORD: "${SEED_DEFAULT_PASSWORD:-Password123!}"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-http://localhost:4200}"
+      Storage__HandoverRoot: /app/private/handovers
     ports:
       - "8080:8080"
+    volumes:
+      - handover-data:/app/private/handovers
 
 volumes:
   sqlserver-data:
+  handover-data:

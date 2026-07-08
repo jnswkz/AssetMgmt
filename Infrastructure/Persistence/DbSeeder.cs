@@ -21,14 +21,17 @@ public class DbSeeder
     private readonly IPasswordHasher _hasher;
     private readonly IConfiguration _config;
     private readonly ILogger<DbSeeder> _logger;
+    private readonly IWebHostEnvironment _environment;
 
     public DbSeeder(
-        AppDbContext db, IPasswordHasher hasher, IConfiguration config, ILogger<DbSeeder> logger)
+        AppDbContext db, IPasswordHasher hasher, IConfiguration config,
+        ILogger<DbSeeder> logger, IWebHostEnvironment environment)
     {
         _db = db;
         _hasher = hasher;
         _config = config;
         _logger = logger;
+        _environment = environment;
     }
 
     public async Task SeedPasswordsAsync(CancellationToken ct = default)
@@ -40,7 +43,11 @@ public class DbSeeder
         if (pending.Count == 0)
             return;
 
-        var password = _config["SEED_DEFAULT_PASSWORD"] ?? DefaultPassword;
+        var configuredPassword = _config["SEED_DEFAULT_PASSWORD"];
+        if (_environment.IsProduction() && string.IsNullOrWhiteSpace(configuredPassword))
+            throw new InvalidOperationException(
+                "SEED_DEFAULT_PASSWORD must be explicitly configured when seeded users exist in Production.");
+        var password = configuredPassword ?? DefaultPassword;
         var hash = _hasher.Hash(password);
 
         foreach (var user in pending)

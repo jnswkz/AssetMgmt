@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using AssetMgmt.Application.Auth;
 using AssetMgmt.Domain.Entities;
 using AssetMgmt.Domain.Exceptions;
@@ -12,6 +14,7 @@ public class AiAskService
     private readonly IReadOnlyDictionary<string, IAiToolHandler> _toolHandlers;
     private readonly ICurrentUser _currentUser;
     private readonly AiConversationStore _conversationStore;
+    private readonly AiPendingActionService _pendingActions;
     private readonly AppDbContext _db;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ILogger<AiAskService> _logger;
@@ -21,6 +24,7 @@ public class AiAskService
         IEnumerable<IAiToolHandler> toolHandlers,
         ICurrentUser currentUser,
         AiConversationStore conversationStore,
+        AiPendingActionService pendingActions,
         AppDbContext db,
         IHttpContextAccessor httpContextAccessor,
         ILogger<AiAskService> logger)
@@ -29,6 +33,7 @@ public class AiAskService
         _toolHandlers = toolHandlers.ToDictionary(x => x.ToolName, StringComparer.Ordinal);
         _currentUser = currentUser;
         _conversationStore = conversationStore;
+        _pendingActions = pendingActions;
         _db = db;
         _httpContextAccessor = httpContextAccessor;
         _logger = logger;
@@ -43,6 +48,7 @@ public class AiAskService
         var trimmedMessage = request.Message.Trim();
         AiRouteDecision? decision = null;
         AiToolExecutionResult? execution = null;
+        AiPendingActionDto? pendingAction = null;
 
         try
         {
@@ -58,7 +64,13 @@ public class AiAskService
                     history),
                 ct);
 
-            if (!_toolHandlers.TryGetValue(decision.ToolName, out var handler))
+            if (AiPendingActionService.RequiresServerConfirmation(decision.ToolName))
+            {
+                decision = decision with { RequiresConfirmation = true };
+                (execution, pendingAction) = await _pendingActions.StageAsync(
+                    userId, conversationId, trimmedMessage, decision, ct);
+            }
+            else if (!_toolHandlers.TryGetValue(decision.ToolName, out var handler))
             {
                 execution = AiToolResultFactory.Clarification(
                     "Tôi cần thêm thông tin để xử lý yêu cầu này. Vui lòng diễn đạt rõ hơn hoặc cung cấp mã tài sản.");
@@ -83,7 +95,8 @@ public class AiAskService
                 execution.ToolArguments.Clone(),
                 execution.Answer,
                 execution.SuggestedActions,
-                execution.Sources);
+                FilterSources(execution.Sources),
+                pendingAction);
 
             await WriteAuditAsync(
                 userId,
@@ -95,6 +108,7 @@ public class AiAskService
                 execution.Succeeded && !execution.PermissionDenied,
                 null,
                 decision,
+                pendingAction?.Id,
                 ct);
 
             await _conversationStore.AppendExchangeAsync(
@@ -103,6 +117,7 @@ public class AiAskService
                 trimmedMessage,
                 decision,
                 execution,
+                pendingAction?.Id,
                 ct);
 
             return response;
@@ -117,8 +132,9 @@ public class AiAskService
                 decision?.Arguments,
                 conversationId,
                 false,
-                ex.Message,
+                ex.GetType().Name,
                 decision,
+                pendingAction?.Id,
                 ct);
 
             _logger.LogError(ex, "AI router ask failed for conversation {ConversationId}", conversationId);
@@ -136,6 +152,7 @@ public class AiAskService
         bool success,
         string? errorMessage,
         AiRouteDecision? decision,
+        Guid? pendingActionId,
         CancellationToken ct)
     {
         try
@@ -144,15 +161,18 @@ public class AiAskService
 
             var metadata = new
             {
-                message = request.Message,
+                messageHash = HashMessage(request.Message),
+                messageLength = request.Message.Length,
                 detectedIntent,
                 selectedTool,
-                toolArguments = toolArguments,
+                argumentKeys = toolArguments is { ValueKind: JsonValueKind.Object }
+                    ? toolArguments.Value.EnumerateObject().Select(x => x.Name).ToArray()
+                    : [],
                 assetId = request.AssetId,
                 conversationId,
+                pendingActionId,
                 confidence = decision?.Confidence,
                 requiresConfirmation = decision?.RequiresConfirmation,
-                reason = decision?.Reason,
                 success
             };
 
@@ -180,4 +200,12 @@ public class AiAskService
 
     private static string? Truncate(string? value, int max) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Length <= max ? value : value[..max];
+
+    private static string HashMessage(string message) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(message))).ToLowerInvariant();
+
+    private static IReadOnlyList<AiSourceReference> FilterSources(IReadOnlyList<AiSourceReference> sources) =>
+        sources.Where(source => Uri.TryCreate(source.Url, UriKind.Absolute, out var uri) &&
+                                (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp))
+            .ToList();
 }

@@ -29,6 +29,10 @@ public class ExceptionHandlingMiddleware
         {
             await WriteProblem(context, StatusCodes.Status409Conflict, "Conflict", ex.Message);
         }
+        catch (NotFoundException ex)
+        {
+            await WriteProblem(context, StatusCodes.Status404NotFound, "Not Found", ex.Message);
+        }
         catch (DbUpdateConcurrencyException)
         {
             await WriteProblem(context, StatusCodes.Status409Conflict,

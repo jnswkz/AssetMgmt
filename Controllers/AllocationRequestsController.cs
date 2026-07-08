@@ -63,4 +63,15 @@ public class AllocationRequestsController : ControllerBase
         var result = await _handover.GetForRequestAsync(id, ct);
         return result is not null ? Ok(result) : NotFound();
     }
+
+    [HttpGet("{id:guid}/handover/download")]
+    [Authorize(Policy = "RequireEmployee")]
+    public async Task<IActionResult> DownloadHandover(Guid id, CancellationToken ct)
+    {
+        await _service.GetByIdAsync(id, ct);
+        var file = await _handover.GetFileForRequestAsync(id, ct);
+        if (file is null || !System.IO.File.Exists(file.FullPath)) return NotFound();
+        Response.Headers.CacheControl = "no-store, private";
+        return PhysicalFile(file.FullPath, "application/pdf", $"{file.DocumentNumber}.pdf");
+    }
 }

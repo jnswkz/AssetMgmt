@@ -72,8 +72,8 @@ public class UserAdminService
 
     public async Task<UserDto> CreateAsync(CreateUserRequest req, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(req.Password) || req.Password.Length < 6)
-            throw new DomainException("Password must be at least 6 characters.");
+        if (string.IsNullOrWhiteSpace(req.Password) || req.Password.Length < 8)
+            throw new DomainException("Password must be at least 8 characters.");
 
         var normalizedUserName = req.UserName.Trim().ToUpperInvariant();
         var normalizedEmail = req.Email.Trim().ToUpperInvariant();
@@ -122,6 +122,7 @@ public class UserAdminService
 
         var departmentChanged = user.DepartmentId != req.DepartmentId;
         var deactivated = user.IsActive && !req.IsActive;
+        var securityContextChanged = departmentChanged || user.Role != req.Role || deactivated;
 
         user.Email = req.Email.Trim();
         user.NormalizedEmail = normalizedEmail;
@@ -129,6 +130,12 @@ public class UserAdminService
         user.Role = req.Role;
         user.DepartmentId = req.DepartmentId;
         user.IsActive = req.IsActive;
+
+        if (securityContextChanged)
+        {
+            user.SecurityStamp = Guid.NewGuid().ToString("N");
+            await RevokeRefreshSessionsAsync(user.Id, ct);
+        }
 
         if (deactivated || departmentChanged)
             await CreateReturnObligationsAsync(user.Id,
@@ -140,8 +147,8 @@ public class UserAdminService
 
     public async Task ResetPasswordAsync(Guid id, string newPassword, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 6)
-            throw new DomainException("Password must be at least 6 characters.");
+        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 8)
+            throw new DomainException("Password must be at least 8 characters.");
 
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id, ct)
             ?? throw new DomainException("User not found.");
@@ -149,6 +156,7 @@ public class UserAdminService
         user.PasswordHash = _hasher.Hash(newPassword);
         // Rotate the security stamp so existing refresh tokens are invalidated.
         user.SecurityStamp = Guid.NewGuid().ToString("N");
+        await RevokeRefreshSessionsAsync(user.Id, ct);
         await _db.SaveChangesAsync(ct);
     }
 
@@ -163,6 +171,7 @@ public class UserAdminService
         user.IsActive = false;
         // Rotate stamp to revoke any active sessions.
         user.SecurityStamp = Guid.NewGuid().ToString("N");
+        await RevokeRefreshSessionsAsync(user.Id, ct);
         await CreateReturnObligationsAsync(user.Id, ReturnObligationReason.UserDeactivated, ct);
         await _db.SaveChangesAsync(ct);
     }
@@ -195,6 +204,15 @@ public class UserAdminService
                 Reason = reason,
                 DueAt = dueAt
             });
+    }
+
+    private async Task RevokeRefreshSessionsAsync(Guid userId, CancellationToken ct)
+    {
+        var sessions = await _db.RefreshSessions
+            .Where(x => x.UserId == userId && x.RevokedAt == null)
+            .ToListAsync(ct);
+        var now = DateTime.UtcNow;
+        foreach (var session in sessions) session.RevokedAt = now;
     }
 
     private static UserDto Map(User u) => new(

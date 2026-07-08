@@ -31,7 +31,7 @@ public class AllocationRequestConfiguration : IEntityTypeConfiguration<Allocatio
         b.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("SYSUTCDATETIME()");
         b.Property(x => x.RowVersion).HasColumnName("row_version").IsRowVersion();
 
-        b.HasIndex(x => x.IdempotencyKey).IsUnique();
+        b.HasIndex(x => new { x.RequesterId, x.IdempotencyKey }).IsUnique();
 
         b.HasOne(x => x.Requester)
             .WithMany()

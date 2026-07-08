@@ -10,13 +10,7 @@ namespace AssetMgmt.Controllers;
 public class AllocationsController : ControllerBase
 {
     private readonly AllocationHistoryService _service;
-    private readonly IWebHostEnvironment _env;
-
-    public AllocationsController(AllocationHistoryService service, IWebHostEnvironment env)
-    {
-        _service = service;
-        _env = env;
-    }
+    public AllocationsController(AllocationHistoryService service) => _service = service;
 
     [HttpGet("allocations/history")]
     [Authorize(Policy = "RequireManager")]
@@ -44,32 +38,10 @@ public class AllocationsController : ControllerBase
         if (handover is null)
             return NotFound();
 
-        var webRoot = _env.WebRootPath ?? Path.Combine(_env.ContentRootPath, "wwwroot");
-        var fullPath = ResolveWwwrootPath(webRoot, handover.FilePath);
-        if (!System.IO.File.Exists(fullPath))
+        if (!System.IO.File.Exists(handover.FullPath))
             return NotFound();
 
-        return PhysicalFile(
-            fullPath,
-            "application/pdf",
-            $"{handover.DocumentNumber}.pdf");
-    }
-
-    private static string ResolveWwwrootPath(string webRoot, string webPath)
-    {
-        var relativePath = webPath
-            .TrimStart('/', '\\')
-            .Replace('/', Path.DirectorySeparatorChar)
-            .Replace('\\', Path.DirectorySeparatorChar);
-
-        var root = Path.GetFullPath(webRoot);
-        var fullPath = Path.GetFullPath(Path.Combine(root, relativePath));
-        var rootWithSeparator = root.EndsWith(Path.DirectorySeparatorChar)
-            ? root
-            : root + Path.DirectorySeparatorChar;
-        if (!fullPath.StartsWith(rootWithSeparator, StringComparison.Ordinal))
-            throw new InvalidOperationException("Invalid file path.");
-
-        return fullPath;
+        Response.Headers.CacheControl = "no-store, private";
+        return PhysicalFile(handover.FullPath, "application/pdf", $"{handover.DocumentNumber}.pdf");
     }
 }

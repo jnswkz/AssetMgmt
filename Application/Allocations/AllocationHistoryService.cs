@@ -13,20 +13,17 @@ public class AllocationHistoryService
 {
     private readonly AppDbContext _db;
     private readonly ICurrentUser _currentUser;
-    private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IHandoverDocumentService _handover;
     private readonly DataScopeService _scope;
 
     public AllocationHistoryService(
         AppDbContext db,
         ICurrentUser currentUser,
-        IHttpContextAccessor httpContextAccessor,
         IHandoverDocumentService handover,
         DataScopeService scope)
     {
         _db = db;
         _currentUser = currentUser;
-        _httpContextAccessor = httpContextAccessor;
         _handover = handover;
         _scope = scope;
     }
@@ -131,12 +128,11 @@ public class AllocationHistoryService
                 allocation?.ExpectedReturnAt,
                 allocation?.AllocationRequestId,
                 handover?.DocumentNumber,
-                handover?.FilePath,
-                ToPublicUrl(handover?.FilePath));
+                handover is not null);
         }).ToList();
     }
 
-    public async Task<MyAssetHandoverFile?> GetMyAssetHandoverAsync(Guid assetId, CancellationToken ct)
+    public async Task<HandoverFileResult?> GetMyAssetHandoverAsync(Guid assetId, CancellationToken ct)
     {
         var userId = _currentUser.Id ?? throw new DomainException("Not authenticated.");
 
@@ -158,32 +154,13 @@ public class AllocationHistoryService
         if (allocation is null)
             return null;
 
-        var handover = await _db.HandoverDocuments.AsNoTracking()
-            .Where(d => d.AllocationId == allocation.Id)
-            .OrderByDescending(d => d.GeneratedAt)
-            .Select(d => new MyAssetHandoverFile(d.DocumentNumber, d.FilePath))
-            .FirstOrDefaultAsync(ct);
+        var handover = await _handover.GetFileForAllocationAsync(allocation.Id, ct);
 
         if (handover is not null)
             return handover;
 
-        var generated = await _handover.GenerateForAllocationAsync(allocation.Id, allocation.CreatedBy, ct);
-        return new MyAssetHandoverFile(generated.DocumentNumber, generated.FilePath);
+        await _handover.GenerateForAllocationAsync(allocation.Id, allocation.CreatedBy, ct);
+        return await _handover.GetFileForAllocationAsync(allocation.Id, ct);
     }
 
-    private string? ToPublicUrl(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-            return null;
-
-        if (Uri.TryCreate(path, UriKind.Absolute, out _))
-            return path;
-
-        var request = _httpContextAccessor.HttpContext?.Request;
-        if (request is null)
-            return path;
-
-        var normalizedPath = path.StartsWith('/') ? path : $"/{path}";
-        return $"{request.Scheme}://{request.Host}{request.PathBase}{normalizedPath}";
-    }
 }

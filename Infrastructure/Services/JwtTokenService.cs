@@ -13,6 +13,7 @@ public class JwtTokenService : ITokenService
     private const string TokenTypeClaim = "typ";
     private const string AccessType = "access";
     private const string RefreshType = "refresh";
+    public const string SecurityStampClaim = "stamp";
 
     private readonly JwtOptions _opts;
     private readonly SymmetricSecurityKey _key;
@@ -35,27 +36,29 @@ public class JwtTokenService : ITokenService
             new(ClaimTypes.Role, user.Role.ToString()),
             new("employee_code", user.EmployeeCode),
             new("full_name", user.FullName),
+            new(SecurityStampClaim, user.SecurityStamp ?? string.Empty),
             new(TokenTypeClaim, AccessType)
         };
         return (Write(claims, expires), expires);
     }
 
-    public string CreateRefreshToken(User user)
+    public RefreshTokenResult CreateRefreshToken(User user)
     {
         var expires = DateTime.UtcNow.AddDays(_opts.RefreshTokenDays);
+        var jti = Guid.NewGuid().ToString("N");
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new(JwtRegisteredClaimNames.Jti, jti),
             // Bind the refresh token to the user's current security stamp so it can be
             // invalidated by rotating the stamp (e.g. on password change).
-            new("stamp", user.SecurityStamp ?? string.Empty),
+            new(SecurityStampClaim, user.SecurityStamp ?? string.Empty),
             new(TokenTypeClaim, RefreshType)
         };
-        return Write(claims, expires);
+        return new RefreshTokenResult(Write(claims, expires), jti, expires);
     }
 
-    public Guid? ValidateRefreshToken(string refreshToken)
+    public ValidatedRefreshToken? ValidateRefreshToken(string refreshToken)
     {
         var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
         try
@@ -76,7 +79,15 @@ public class JwtTokenService : ITokenService
                 return null;
 
             var sub = principal.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
-            return Guid.TryParse(sub, out var id) ? id : null;
+            var jti = principal.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
+            var stamp = principal.FindFirst(SecurityStampClaim)?.Value;
+            var exp = principal.FindFirst(JwtRegisteredClaimNames.Exp)?.Value;
+            if (!Guid.TryParse(sub, out var id) || string.IsNullOrWhiteSpace(jti) ||
+                string.IsNullOrWhiteSpace(stamp) || !long.TryParse(exp, out var unixSeconds))
+                return null;
+
+            return new ValidatedRefreshToken(
+                id, jti, stamp, DateTimeOffset.FromUnixTimeSeconds(unixSeconds).UtcDateTime);
         }
         catch
         {

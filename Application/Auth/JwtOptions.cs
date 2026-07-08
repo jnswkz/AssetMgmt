@@ -6,7 +6,7 @@ public class JwtOptions
 
     public string Issuer { get; set; } = "AssetMgmt";
     public string Audience { get; set; } = "AssetMgmtClient";
-    public int AccessTokenMinutes { get; set; } = 60;
+    public int AccessTokenMinutes { get; set; } = 10;
     public int RefreshTokenDays { get; set; } = 7;
 
     // Bound from environment (JWT_SECRET), not appsettings.

@@ -1,6 +1,7 @@
 using AssetMgmt.Application.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace AssetMgmt.Controllers;
 
@@ -19,18 +20,31 @@ public class AuthController : ControllerBase
 
     [HttpPost("login")]
     [AllowAnonymous]
+    [EnableRateLimiting("Login")]
     public async Task<ActionResult<TokenResponse>> Login(LoginRequest req, CancellationToken ct)
     {
         var tokens = await _auth.LoginAsync(req, ct);
+        Response.Headers.CacheControl = "no-store";
         return Ok(tokens);
     }
 
     [HttpPost("refresh")]
     [AllowAnonymous]
+    [EnableRateLimiting("Refresh")]
     public async Task<ActionResult<TokenResponse>> Refresh(RefreshRequest req, CancellationToken ct)
     {
         var tokens = await _auth.RefreshAsync(req, ct);
+        Response.Headers.CacheControl = "no-store";
         return Ok(tokens);
+    }
+
+    [HttpPost("logout")]
+    [AllowAnonymous]
+    [EnableRateLimiting("Refresh")]
+    public async Task<IActionResult> Logout(LogoutRequest req, CancellationToken ct)
+    {
+        await _auth.LogoutAsync(req.RefreshToken, ct);
+        return NoContent();
     }
 
     [HttpGet("me")]

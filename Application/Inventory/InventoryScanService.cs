@@ -59,7 +59,9 @@ public class InventoryScanService
             (scan.DepartmentId is null || asset.CurrentHolder?.DepartmentId == scan.DepartmentId);
         scan.Items.Add(new InventoryScanItem
         {
-            AssetInstanceId = asset?.Id,
+            // Do not disclose or persist the internal ID of an asset outside the
+            // scan's department. The code is enough to report it as unexpected.
+            AssetInstanceId = expected ? asset!.Id : null,
             AssetCode = normalized,
             Result = expected ? InventoryScanResult.Found : InventoryScanResult.Unexpected,
             ScannedAt = DateTime.UtcNow

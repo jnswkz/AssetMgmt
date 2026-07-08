@@ -5,8 +5,10 @@ namespace AssetMgmt.Application.Auth;
 public interface ITokenService
 {
     (string token, DateTime expiresAt) CreateAccessToken(User user);
-    string CreateRefreshToken(User user);
+    RefreshTokenResult CreateRefreshToken(User user);
 
-    /// <summary>Validates a refresh token and returns the user id, or null if invalid.</summary>
-    Guid? ValidateRefreshToken(string refreshToken);
+    ValidatedRefreshToken? ValidateRefreshToken(string refreshToken);
 }
+
+public sealed record RefreshTokenResult(string Token, string Jti, DateTime ExpiresAt);
+public sealed record ValidatedRefreshToken(Guid UserId, string Jti, string SecurityStamp, DateTime ExpiresAt);

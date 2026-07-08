@@ -12,7 +12,15 @@ public record AiAskResponse(
     JsonElement ToolArguments,
     string Answer,
     IReadOnlyList<string> SuggestedActions,
-    IReadOnlyList<AiSourceReference> Sources);
+    IReadOnlyList<AiSourceReference> Sources,
+    AiPendingActionDto? PendingAction = null);
+
+public record AiPendingActionDto(
+    Guid Id,
+    string Action,
+    string Summary,
+    DateTime ExpiresAt,
+    string Status);
 
 public record AiSourceReference(string Title, string Url, string? Kind);
 

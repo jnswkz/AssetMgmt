@@ -24,6 +24,8 @@ public class AppDbContext : DbContext
     public DbSet<InventoryScanItem> InventoryScanItems => Set<InventoryScanItem>();
     public DbSet<AiAgentConversation> AiAgentConversations => Set<AiAgentConversation>();
     public DbSet<AiAgentMessage> AiAgentMessages => Set<AiAgentMessage>();
+    public DbSet<AiPendingAction> AiPendingActions => Set<AiPendingAction>();
+    public DbSet<RefreshSession> RefreshSessions => Set<RefreshSession>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

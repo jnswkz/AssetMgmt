@@ -50,6 +50,7 @@ public class AiConversationStore
         string userMessage,
         AiRouteDecision decision,
         AiToolExecutionResult execution,
+        Guid? pendingActionId,
         CancellationToken ct)
     {
         try
@@ -83,7 +84,8 @@ public class AiConversationStore
                 Content = execution.Answer,
                 Intent = execution.Intent,
                 ToolCallsJson = BuildToolCallJson(decision, execution),
-                RequiresConfirmation = decision.RequiresConfirmation
+                RequiresConfirmation = decision.RequiresConfirmation,
+                PendingActionId = pendingActionId?.ToString("D")
             });
 
             await _db.SaveChangesAsync(ct);

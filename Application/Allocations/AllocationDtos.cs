@@ -27,9 +27,4 @@ public record MyAssetItem(
     DateTime? ExpectedReturnAt,
     Guid? AllocationRequestId,
     string? HandoverDocumentNumber,
-    string? HandoverFilePath,
-    string? HandoverFileUrl);
-
-public record MyAssetHandoverFile(
-    string DocumentNumber,
-    string FilePath);
+    bool HasHandover);

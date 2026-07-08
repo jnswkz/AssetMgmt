@@ -7,9 +7,8 @@ using AssetMgmt.Infrastructure.Persistence;
 namespace AssetMgmt.Middleware;
 
 /// <summary>
-/// Records an <see cref="AuditLog"/> row for every state-changing API call
-/// (POST/PUT/PATCH/DELETE under /api). Read requests and the dashboard are
-/// ignored. Runs after the request so it can capture the outcome; auditing
+/// Records an <see cref="AuditLog"/> row for state-changing API calls and
+/// explicitly sensitive reads. Runs after the request so it can capture the outcome; auditing
 /// never affects the response — failures here are swallowed and logged.
 ///
 /// Request bodies are deliberately NOT recorded (they may contain passwords).
@@ -56,11 +55,18 @@ public class AuditLoggingMiddleware
 
     private static bool ShouldAudit(HttpContext context)
     {
-        if (!AuditedMethods.Contains(context.Request.Method))
-            return false;
-
         var path = context.Request.Path;
-        return path.StartsWithSegments("/api");
+        if (!path.StartsWithSegments("/api")) return false;
+        if (AuditedMethods.Contains(context.Request.Method)) return true;
+        if (!HttpMethods.IsGet(context.Request.Method)) return false;
+
+        var value = path.Value ?? string.Empty;
+        return value.StartsWith("/api/requests/", StringComparison.OrdinalIgnoreCase) ||
+               value.StartsWith("/api/allocations/history", StringComparison.OrdinalIgnoreCase) ||
+               (value.StartsWith("/api/assets/", StringComparison.OrdinalIgnoreCase) &&
+                value.EndsWith("/history", StringComparison.OrdinalIgnoreCase)) ||
+               (value.StartsWith("/api/me/assets/", StringComparison.OrdinalIgnoreCase) &&
+                value.EndsWith("/handover", StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task WriteAuditAsync(HttpContext context, Exception? exception)
@@ -84,7 +90,7 @@ public class AuditLoggingMiddleware
                 CorrelationId = TryGetCorrelationId(context),
                 Severity = failed ? "Warning" : "Info",
                 Result = failed ? "Failed" : "Success",
-                ErrorMessage = exception?.Message,
+                ErrorMessage = exception?.GetType().Name,
             };
 
             using var scope = _scopeFactory.CreateScope();

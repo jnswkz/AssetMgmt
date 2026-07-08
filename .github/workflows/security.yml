@@ -1,0 +1,56 @@
+name: backend-security
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_PID: Developer
+          SA_PASSWORD: "AssetMgmt_Test_2026!"
+        ports:
+          - 1433:1433
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet restore AssetMgmt.Tests/AssetMgmt.Tests.csproj
+      - run: dotnet build AssetMgmt.csproj --no-restore --configuration Release
+      - run: dotnet test AssetMgmt.Tests/AssetMgmt.Tests.csproj --no-restore --configuration Release
+      - name: Verify SQL migrations on SQL Server
+        shell: bash
+        env:
+          SQL_CONTAINER: ${{ job.services.sqlserver.id }}
+          SA_PASSWORD: "AssetMgmt_Test_2026!"
+        run: |
+          for _ in $(seq 1 60); do
+            SQLCMD=/opt/mssql-tools18/bin/sqlcmd
+            docker exec "$SQL_CONTAINER" test -x "$SQLCMD" || SQLCMD=/opt/mssql-tools/bin/sqlcmd
+            if docker exec "$SQL_CONTAINER" "$SQLCMD" -S localhost -U sa -P "$SA_PASSWORD" -C -Q "SELECT 1" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          docker cp Migrations/manual/. "$SQL_CONTAINER":/tmp/migrations
+          for script in 000_database_init.sql 001_asset_disposals.sql 002_rowversion_concurrency.sql 003_agent_chat_history.sql 004_business_requirements.sql 005_security_hardening.sql; do
+            docker exec "$SQL_CONTAINER" "$SQLCMD" -S localhost -U sa -P "$SA_PASSWORD" -C -b -i "/tmp/migrations/$script"
+          done
+          for script in 002_rowversion_concurrency.sql 003_agent_chat_history.sql 004_business_requirements.sql 005_security_hardening.sql; do
+            docker exec "$SQL_CONTAINER" "$SQLCMD" -S localhost -U sa -P "$SA_PASSWORD" -C -b -i "/tmp/migrations/$script"
+          done
+          docker exec "$SQL_CONTAINER" "$SQLCMD" -S localhost -U sa -P "$SA_PASSWORD" -C -b -d AssetMgmt -Q "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID('asset.allocation_requests') AND name = 'UX_allocation_requests_requester_idempotency' AND is_unique = 1) THROW 51000, 'Missing requester-scoped idempotency index', 1; IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('asset.allocation_requests') AND name = 'handover_due_at' AND is_nullable = 1) THROW 51000, 'handover_due_at is nullable', 1;"
+      - name: Reject high or critical NuGet advisories
+        shell: bash
+        run: |
+          report="$(dotnet list AssetMgmt.csproj package --vulnerable --include-transitive)"
+          echo "$report"
+          if echo "$report" | grep -Eq '[[:space:]](High|Critical)[[:space:]]'; then
+            exit 1
+          fi

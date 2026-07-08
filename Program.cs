@@ -1,4 +1,6 @@
 using System.Text;
+using System.Security.Claims;
+using System.Threading.RateLimiting;
 using AssetMgmt.Application.Allocations;
 using AssetMgmt.Application.Agents;
 using AssetMgmt.Application.Assets;
@@ -22,6 +24,8 @@ using FluentValidation.AspNetCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.OpenApi;
 using QuestPDF.Infrastructure;
 using Scalar.AspNetCore;
@@ -44,16 +48,21 @@ builder.Services.AddFluentValidationAutoValidation();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddHttpContextAccessor();
 builder.Services.Configure<AiRouterOptions>(builder.Configuration.GetSection(AiRouterOptions.SectionName));
+builder.Services.Configure<HandoverStorageOptions>(builder.Configuration.GetSection(HandoverStorageOptions.SectionName));
 
-// DEV: default allows any origin. TODO: switch back to "http://localhost:4200"
-// (or the real frontend origin) before production.
-var corsOrigins = (builder.Configuration["CORS_ALLOWED_ORIGINS"] ?? "*")
+// Development defaults to the local Angular origin. Production requires an
+// explicit, non-wildcard allow-list.
+var configuredCors = builder.Configuration["CORS_ALLOWED_ORIGINS"];
+if (builder.Environment.IsProduction() && string.IsNullOrWhiteSpace(configuredCors))
+    throw new InvalidOperationException("CORS_ALLOWED_ORIGINS must be configured in Production.");
+var corsOrigins = (configuredCors ?? "http://localhost:4200")
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+if (builder.Environment.IsProduction() && corsOrigins.Contains("*"))
+    throw new InvalidOperationException("Wildcard CORS is forbidden in Production.");
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("Frontend", policy =>
     {
-        // DEV: "*" allows any origin. Switch back to a fixed origin list for production.
         if (corsOrigins.Contains("*"))
             policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
         else
@@ -74,6 +83,9 @@ var jwtOptions = new JwtOptions();
 builder.Configuration.GetSection(JwtOptions.SectionName).Bind(jwtOptions);
 jwtOptions.Secret = builder.Configuration["JWT_SECRET"]
     ?? throw new InvalidOperationException("JWT_SECRET is not set (.env).");
+if (builder.Environment.IsProduction() &&
+    (jwtOptions.Secret.Length < 32 || jwtOptions.Secret.Contains("change-me", StringComparison.OrdinalIgnoreCase)))
+    throw new InvalidOperationException("JWT_SECRET must be a non-default value of at least 32 characters in Production.");
 builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(jwtOptions));
 
 builder.Services.AddScoped<IPasswordHasher, BCryptPasswordHasher>();
@@ -98,6 +110,7 @@ builder.Services.AddScoped<AiAssetAccessService>();
 builder.Services.AddScoped<AiConversationStore>();
 builder.Services.AddScoped<AiOperationsService>();
 builder.Services.AddScoped<AiAskService>();
+builder.Services.AddScoped<AiPendingActionService>();
 builder.Services.AddScoped<IAiRouterService, OpenAiRouterService>();
 builder.Services.AddScoped<IAiToolHandler, GetMyAssetsTool>();
 builder.Services.AddScoped<IAiToolHandler, GetAssetStatusTool>();
@@ -138,6 +151,23 @@ builder.Services.AddHangfire(config => config
     }));
 builder.Services.AddHangfireServer();
 
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = (context, _) =>
+    {
+        context.HttpContext.Response.Headers.RetryAfter = "60";
+        return ValueTask.CompletedTask;
+    };
+    options.AddPolicy("Login", httpContext => FixedWindowBy(
+        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown", 10));
+    options.AddPolicy("Refresh", httpContext => FixedWindowBy(
+        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown", 30));
+    options.AddPolicy("Ai", httpContext => FixedWindowBy(
+        httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown", 10));
+});
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -151,6 +181,29 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Secret)),
             ValidateLifetime = true,
             ClockSkew = TimeSpan.FromSeconds(30)
+        };
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async context =>
+            {
+                var userIdValue = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+                var stamp = context.Principal?.FindFirstValue(JwtTokenService.SecurityStampClaim);
+                var tokenType = context.Principal?.FindFirstValue("typ");
+                if (!Guid.TryParse(userIdValue, out var userId) || string.IsNullOrWhiteSpace(stamp) || tokenType != "access")
+                {
+                    context.Fail("Invalid access token.");
+                    return;
+                }
+
+                var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+                var securityState = await db.Users.AsNoTracking()
+                    .Where(u => u.Id == userId)
+                    .Select(u => new { u.IsActive, u.SecurityStamp })
+                    .FirstOrDefaultAsync(context.HttpContext.RequestAborted);
+                if (securityState is null || !securityState.IsActive ||
+                    !string.Equals(securityState.SecurityStamp, stamp, StringComparison.Ordinal))
+                    context.Fail("Session has been revoked.");
+            }
         };
     });
 
@@ -189,11 +242,19 @@ using (var scope = app.Services.CreateScope())
 {
     var seeder = scope.ServiceProvider.GetRequiredService<DbSeeder>();
     await seeder.SeedPasswordsAsync();
+    var handovers = scope.ServiceProvider.GetRequiredService<IHandoverDocumentService>();
+    await handovers.MigrateLegacyFilesAsync(CancellationToken.None);
 }
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
-app.UseStaticFiles(); // serve generated QR codes from wwwroot/qr
+var qrRoot = Path.Combine(app.Environment.WebRootPath ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot"), "qr");
+Directory.CreateDirectory(qrRoot);
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(qrRoot),
+    RequestPath = "/qr"
+});
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -206,19 +267,21 @@ if (app.Environment.IsDevelopment())
 app.UseCors("Frontend");
 
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 
 // Audit sensitive (mutating) API calls — after auth so the user is known.
 app.UseMiddleware<AuditLoggingMiddleware>();
 
 // Hangfire dashboard + recurring jobs (Day 7).
-app.UseHangfireDashboard("/hangfire", new DashboardOptions
+var hangfireDashboardEnabled = builder.Configuration.GetValue<bool>("HangfireDashboard:Enabled");
+if (hangfireDashboardEnabled)
 {
-    Authorization = new[]
+    app.UseHangfireDashboard("/hangfire", new DashboardOptions
     {
-        new HangfireDashboardAuthorizationFilter(app.Environment.IsDevelopment())
-    }
-});
+        Authorization = new[] { new HangfireDashboardAuthorizationFilter() }
+    });
+}
 
 RecurringJob.AddOrUpdate<LockTimeoutJob>(
     "lock-timeout",
@@ -246,3 +309,12 @@ static string BuildConnectionString(IConfiguration config)
     return $"Server={server},{port};Database={database};User Id={user};Password={password};"
          + $"TrustServerCertificate={trustCert};MultipleActiveResultSets=True;Encrypt=True";
 }
+
+static RateLimitPartition<string> FixedWindowBy(string key, int permitLimit) =>
+    RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
+    {
+        PermitLimit = permitLimit,
+        Window = TimeSpan.FromMinutes(1),
+        QueueLimit = 0,
+        AutoReplenishment = true
+    });

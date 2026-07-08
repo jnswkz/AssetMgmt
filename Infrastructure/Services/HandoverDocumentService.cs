@@ -4,8 +4,8 @@ using AssetMgmt.Domain.Entities;
 using AssetMgmt.Domain.Exceptions;
 using AssetMgmt.Infrastructure.Documents;
 using AssetMgmt.Infrastructure.Persistence;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using QuestPDF.Fluent;
 
 namespace AssetMgmt.Infrastructure.Services;
@@ -14,22 +14,33 @@ public class HandoverDocumentService : IHandoverDocumentService
 {
     private readonly AppDbContext _db;
     private readonly IWebHostEnvironment _env;
+    private readonly string _storageRoot;
 
-    public HandoverDocumentService(AppDbContext db, IWebHostEnvironment env)
+    public HandoverDocumentService(
+        AppDbContext db,
+        IWebHostEnvironment env,
+        IOptions<HandoverStorageOptions> options)
     {
         _db = db;
         _env = env;
+        _storageRoot = Path.GetFullPath(options.Value.HandoverRoot
+            ?? Path.Combine(env.ContentRootPath, "private", "handovers"));
+
+        var webRoot = Path.GetFullPath(env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot"));
+        if (string.Equals(_storageRoot, webRoot, StringComparison.OrdinalIgnoreCase) ||
+            IsWithin(_storageRoot, webRoot))
+            throw new InvalidOperationException("Handover storage must be outside wwwroot.");
     }
 
     public async Task<HandoverResult> GenerateForAllocationAsync(
         Guid allocationId, Guid generatedBy, CancellationToken ct)
     {
-        // Pull everything the template needs in one projection.
         var data = await _db.Allocations.AsNoTracking()
             .Where(a => a.Id == allocationId)
             .Select(a => new
             {
                 a.Id,
+                a.AllocationRequestId,
                 a.StartDate,
                 a.Notes,
                 AssetCode = a.AssetInstance.AssetCode,
@@ -48,70 +59,124 @@ public class HandoverDocumentService : IHandoverDocumentService
 
         var now = DateTime.UtcNow;
         var documentNumber = await NextDocumentNumberAsync(now.Year, ct);
-
         var model = new HandoverModel(
-            DocumentNumber: documentNumber,
-            GeneratedAt: now,
-            AssetCode: data.AssetCode,
-            ModelName: data.ModelName,
-            Serial: data.Serial,
-            Location: data.Location,
-            AcquisitionCost: data.AcquisitionCost,
-            EmployeeName: data.EmployeeName,
-            EmployeeCode: data.EmployeeCode,
-            EmployeeDepartment: data.Department,
-            ApproverName: data.ApproverName ?? "IT",
-            HandoverDate: data.StartDate,
-            Notes: data.Notes);
-
+            documentNumber, now, data.AssetCode, data.ModelName, data.Serial,
+            data.Location, data.AcquisitionCost, data.EmployeeName, data.EmployeeCode,
+            data.Department, data.ApproverName ?? "IT", data.StartDate, data.Notes);
         var bytes = new HandoverPdfDocument(model).GeneratePdf();
 
-        // Persist under wwwroot/handovers/<number>.pdf
-        var webRoot = _env.WebRootPath ?? Path.Combine(_env.ContentRootPath, "wwwroot");
-        var dir = Path.Combine(webRoot, "handovers");
-        Directory.CreateDirectory(dir);
-
-        var fileName = $"{documentNumber}.pdf";
-        var absolutePath = Path.Combine(dir, fileName);
+        Directory.CreateDirectory(_storageRoot);
+        var storageKey = $"{Guid.NewGuid():N}.pdf";
+        var absolutePath = ResolvePrivatePath(storageKey);
         await File.WriteAllBytesAsync(absolutePath, bytes, ct);
-
-        var webPath = $"/handovers/{fileName}";
-        var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 
         var doc = new HandoverDocument
         {
             DocumentNumber = documentNumber,
             AllocationId = data.Id,
-            FilePath = webPath,
+            FilePath = storageKey,
             FileSizeBytes = bytes.LongLength,
-            FileHashSha256 = hash,
+            FileHashSha256 = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
             GeneratedBy = generatedBy
         };
         _db.HandoverDocuments.Add(doc);
         await _db.SaveChangesAsync(ct);
 
-        return new HandoverResult(doc.Id, documentNumber, webPath);
+        return Map(doc, data.AllocationRequestId);
     }
 
     public async Task<HandoverResult?> GetForRequestAsync(Guid requestId, CancellationToken ct)
     {
-        return await _db.HandoverDocuments.AsNoTracking()
-            .Where(d => d.Allocation.AllocationRequestId == requestId)
-            .OrderByDescending(d => d.GeneratedAt)
-            .Select(d => new HandoverResult(d.Id, d.DocumentNumber, d.FilePath))
-            .FirstOrDefaultAsync(ct);
+        var doc = await QueryForRequest(requestId).AsNoTracking().FirstOrDefaultAsync(ct);
+        return doc is null ? null : Map(doc, requestId);
     }
 
-    /// <summary>
-    /// Produces the next number in the BB-YYYY-NNNN series for the given year.
-    /// Adequate for the single-instance MVP; a sequence/table would be needed
-    /// for true concurrency safety.
-    /// </summary>
+    public async Task<HandoverFileResult?> GetFileForRequestAsync(Guid requestId, CancellationToken ct)
+    {
+        var doc = await QueryForRequest(requestId).FirstOrDefaultAsync(ct);
+        if (doc is null) return null;
+        await EnsurePrivateStorageAsync(doc, ct);
+        return new HandoverFileResult(doc.DocumentNumber, ResolvePrivatePath(doc.FilePath));
+    }
+
+    public async Task<HandoverFileResult?> GetFileForAllocationAsync(Guid allocationId, CancellationToken ct)
+    {
+        var doc = await _db.HandoverDocuments
+            .Where(d => d.AllocationId == allocationId)
+            .OrderByDescending(d => d.GeneratedAt)
+            .FirstOrDefaultAsync(ct);
+        if (doc is null) return null;
+        await EnsurePrivateStorageAsync(doc, ct);
+        return new HandoverFileResult(doc.DocumentNumber, ResolvePrivatePath(doc.FilePath));
+    }
+
+    public async Task MigrateLegacyFilesAsync(CancellationToken ct)
+    {
+        var legacy = await _db.HandoverDocuments
+            .Where(d => d.FilePath.StartsWith("/handovers/") || d.FilePath.StartsWith("handovers/"))
+            .ToListAsync(ct);
+        foreach (var doc in legacy) await EnsurePrivateStorageAsync(doc, ct, save: false);
+        if (legacy.Count > 0) await _db.SaveChangesAsync(ct);
+    }
+
+    private IQueryable<HandoverDocument> QueryForRequest(Guid requestId) =>
+        _db.HandoverDocuments
+            .Where(d => d.Allocation.AllocationRequestId == requestId)
+            .OrderByDescending(d => d.GeneratedAt);
+
+    private async Task EnsurePrivateStorageAsync(HandoverDocument doc, CancellationToken ct, bool save = true)
+    {
+        if (!IsLegacyPath(doc.FilePath)) return;
+
+        var webRoot = _env.WebRootPath ?? Path.Combine(_env.ContentRootPath, "wwwroot");
+        var legacyName = Path.GetFileName(doc.FilePath);
+        var source = Path.GetFullPath(Path.Combine(webRoot, "handovers", legacyName));
+        var expectedLegacyRoot = Path.GetFullPath(Path.Combine(webRoot, "handovers"));
+        if (!IsWithin(source, expectedLegacyRoot))
+            throw new InvalidOperationException("Invalid legacy handover path.");
+
+        Directory.CreateDirectory(_storageRoot);
+        var storageKey = $"{doc.Id:N}.pdf";
+        var destination = ResolvePrivatePath(storageKey);
+        if (File.Exists(source) && !File.Exists(destination))
+        {
+            await using var input = File.OpenRead(source);
+            await using var output = File.Create(destination);
+            await input.CopyToAsync(output, ct);
+        }
+        doc.FilePath = storageKey;
+        if (save) await _db.SaveChangesAsync(ct);
+    }
+
+    private string ResolvePrivatePath(string storageKey)
+    {
+        if (Path.IsPathRooted(storageKey) || storageKey != Path.GetFileName(storageKey))
+            throw new InvalidOperationException("Invalid handover storage key.");
+        var fullPath = Path.GetFullPath(Path.Combine(_storageRoot, storageKey));
+        if (!IsWithin(fullPath, _storageRoot))
+            throw new InvalidOperationException("Invalid handover storage path.");
+        return fullPath;
+    }
+
+    private static bool IsLegacyPath(string path) =>
+        path.StartsWith("/handovers/", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("handovers/", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsWithin(string path, string root)
+    {
+        var normalizedRoot = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
+        return path.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static HandoverResult Map(HandoverDocument doc, Guid? requestId) => new(
+        doc.Id,
+        doc.DocumentNumber,
+        requestId is null ? string.Empty : $"/api/requests/{requestId:D}/handover/download");
+
     private async Task<string> NextDocumentNumberAsync(int year, CancellationToken ct)
     {
         var prefix = $"BB-{year}-";
-        var countThisYear = await _db.HandoverDocuments
-            .CountAsync(d => d.DocumentNumber.StartsWith(prefix), ct);
+        var countThisYear = await _db.HandoverDocuments.CountAsync(d => d.DocumentNumber.StartsWith(prefix), ct);
         return $"{prefix}{(countThisYear + 1):D4}";
     }
 }
