@@ -283,12 +283,14 @@ if (hangfireDashboardEnabled)
     });
 }
 
-RecurringJob.AddOrUpdate<LockTimeoutJob>(
+var recurringJobs = app.Services.GetRequiredService<IRecurringJobManager>();
+
+recurringJobs.AddOrUpdate<LockTimeoutJob>(
     "lock-timeout",
     job => job.RunAsync(CancellationToken.None),
     "*/5 * * * *"); // every 5 minutes
 
-RecurringJob.AddOrUpdate<DepreciationJob>(
+recurringJobs.AddOrUpdate<DepreciationJob>(
     "depreciation-monthly",
     job => job.RunAsync(CancellationToken.None),
     "0 1 1 * *"); // 01:00 UTC on the 1st of each month

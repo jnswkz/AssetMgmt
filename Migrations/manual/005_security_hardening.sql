@@ -5,6 +5,72 @@ GO
 USE AssetMgmt;
 GO
 
+-- Some existing databases were initialized before the AI migrations existed.
+-- Make this security migration independently runnable instead of assuming 003
+-- has already created the schema.
+IF SCHEMA_ID('ai') IS NULL
+BEGIN
+    EXEC(N'CREATE SCHEMA ai AUTHORIZATION dbo');
+END;
+GO
+
+IF OBJECT_ID('ai.agent_conversations', 'U') IS NULL
+BEGIN
+    CREATE TABLE ai.agent_conversations
+    (
+        id UNIQUEIDENTIFIER NOT NULL CONSTRAINT DF_agent_conversations_id_005 DEFAULT NEWSEQUENTIALID(),
+        user_id UNIQUEIDENTIFIER NOT NULL,
+        conversation_key NVARCHAR(100) NOT NULL,
+        title NVARCHAR(200) NULL,
+        created_at DATETIME2 NOT NULL CONSTRAINT DF_agent_conversations_created_at_005 DEFAULT SYSUTCDATETIME(),
+        updated_at DATETIME2 NOT NULL CONSTRAINT DF_agent_conversations_updated_at_005 DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT PK_agent_conversations_005 PRIMARY KEY (id),
+        CONSTRAINT FK_agent_conversations_users_005 FOREIGN KEY (user_id) REFERENCES asset.users(id)
+    );
+    CREATE UNIQUE INDEX UX_agent_conversations_user_key
+        ON ai.agent_conversations(user_id, conversation_key);
+END;
+GO
+
+IF OBJECT_ID('ai.agent_messages', 'U') IS NULL
+BEGIN
+    CREATE TABLE ai.agent_messages
+    (
+        id UNIQUEIDENTIFIER NOT NULL CONSTRAINT DF_agent_messages_id_005 DEFAULT NEWSEQUENTIALID(),
+        conversation_id UNIQUEIDENTIFIER NOT NULL,
+        role NVARCHAR(20) NOT NULL,
+        content NVARCHAR(MAX) NOT NULL,
+        intent NVARCHAR(80) NULL,
+        tool_calls_json NVARCHAR(MAX) NULL,
+        requires_confirmation BIT NOT NULL CONSTRAINT DF_agent_messages_requires_confirmation_005 DEFAULT 0,
+        pending_action_id NVARCHAR(100) NULL,
+        created_at DATETIME2 NOT NULL CONSTRAINT DF_agent_messages_created_at_005 DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT PK_agent_messages_005 PRIMARY KEY (id),
+        CONSTRAINT FK_agent_messages_conversations_005 FOREIGN KEY (conversation_id)
+            REFERENCES ai.agent_conversations(id) ON DELETE CASCADE,
+        CONSTRAINT CK_agent_messages_role_005 CHECK (role IN ('user', 'assistant'))
+    );
+    CREATE INDEX IX_agent_messages_conversation_created
+        ON ai.agent_messages(conversation_id, created_at);
+END;
+GO
+
+CREATE OR ALTER TRIGGER ai.trg_agent_conversations_updated_at
+ON ai.agent_conversations
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF NOT UPDATE(updated_at)
+    BEGIN
+        UPDATE c
+        SET updated_at = SYSUTCDATETIME()
+        FROM ai.agent_conversations c
+        INNER JOIN inserted i ON c.id = i.id;
+    END
+END;
+GO
+
 -- Repair databases left half-upgraded by an interrupted 004 migration.
 IF COL_LENGTH('asset.allocation_requests', 'handover_due_at') IS NULL
     ALTER TABLE asset.allocation_requests ADD handover_due_at DATETIME2(3) NULL;

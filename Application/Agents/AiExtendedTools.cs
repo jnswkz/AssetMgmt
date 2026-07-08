@@ -18,34 +18,29 @@ public class ListAssetsTool : IAiToolHandler
     {
         var payload = AiJson.Deserialize<ListAssetsPayload>(context.Decision.Arguments)
             ?? new ListAssetsPayload("available", null, null, null, null, null, 5);
+        var displayPayload = payload with { PageSize = Math.Min(payload.PageSize ?? 5, 5) };
 
-        var assets = await _operations.ListAssetsAsync(payload, ct);
+        var assets = await _operations.ListAssetsAsync(displayPayload, ct);
         var scope = NormalizeScope(payload.Scope, context.UserRole);
 
         var answer = assets.Count == 0
             ? scope switch
             {
-                "assigned_to_me" => "Hiện tại bạn không có asset nào trong phạm vi đang hỏi.",
-                "department" => "Hiện chưa có asset phù hợp trong phạm vi phòng ban đang quản lý.",
-                "all" => "Hiện chưa tìm thấy asset phù hợp trong toàn bộ hệ thống.",
-                _ => "Hiện chưa có asset trống phù hợp với tiêu chí bạn đưa ra."
+                "assigned_to_me" => "Mình chưa tìm thấy thiết bị phù hợp trong danh sách của bạn.",
+                "department" => "Mình chưa tìm thấy thiết bị phù hợp trong phòng ban.",
+                "all" => "Mình chưa tìm thấy thiết bị phù hợp.",
+                _ => "Hiện chưa có thiết bị sẵn sàng theo tiêu chí này."
             }
-            : scope switch
-            {
-                "assigned_to_me" => "Các asset phù hợp trong phạm vi của bạn: " + string.Join("; ", assets.Select(FormatAsset)) + ".",
-                "department" => "Các asset phù hợp trong phạm vi phòng ban: " + string.Join("; ", assets.Select(FormatAsset)) + ".",
-                "all" => "Các asset phù hợp trong hệ thống: " + string.Join("; ", assets.Select(FormatAsset)) + ".",
-                _ => "Các asset trống phù hợp: " + string.Join("; ", assets.Select(FormatAsset)) + "."
-            };
+            : BuildAssetAnswer(scope, assets);
 
         return new AiToolExecutionResult(
             AiIntents.ListAssets,
             ToolName,
-            AiJson.ToElement(payload with { Scope = scope }),
+            AiJson.ToElement(displayPayload with { Scope = scope }),
             answer,
             [
-                "Liệt kê các asset models phù hợp",
-                "Tạo request cấp phát cho asset phù hợp"
+                "Xem các dòng thiết bị phù hợp",
+                "Tạo yêu cầu cấp phát"
             ],
             [],
             true,
@@ -64,18 +59,34 @@ public class ListAssetsTool : IAiToolHandler
         return normalized;
     }
 
-    private static string FormatAsset(AiAssetCatalogItem asset)
+    private static string BuildAssetAnswer(string scope, IReadOnlyList<AiAssetCatalogItem> assets)
     {
-        var holder = string.IsNullOrWhiteSpace(asset.CurrentHolderName) ? null : $"người giữ {asset.CurrentHolderName}";
-        var location = string.IsNullOrWhiteSpace(asset.Location) ? null : $"vị trí {asset.Location}";
-        return string.Join(", ", new[]
+        var title = scope switch
         {
-            $"{asset.AssetCode} ({asset.ModelName})",
-            $"trạng thái {asset.Status}",
-            holder,
-            location
-        }.Where(x => !string.IsNullOrWhiteSpace(x)));
+            "assigned_to_me" => $"Bạn có {assets.Count} thiết bị phù hợp:",
+            "department" => $"Có {assets.Count} thiết bị phù hợp trong phòng ban:",
+            "all" => $"Có {assets.Count} thiết bị phù hợp:",
+            _ => $"Có {assets.Count} thiết bị sẵn sàng cấp phát:"
+        };
+        return title + "\n" + string.Join("\n", assets.Select(asset => FormatAsset(asset, scope)));
     }
+
+    private static string FormatAsset(AiAssetCatalogItem asset, string scope)
+    {
+        var details = new List<string> { asset.ModelName };
+        if (scope is "department" or "all") details.Add(StatusLabel(asset.Status));
+        if (!string.IsNullOrWhiteSpace(asset.Location)) details.Add(asset.Location);
+        return $"• {asset.AssetCode} — {string.Join(" · ", details)}";
+    }
+
+    private static string StatusLabel(AssetStatus status) => status switch
+    {
+        AssetStatus.InStock => "Sẵn sàng",
+        AssetStatus.Allocated => "Đang sử dụng",
+        AssetStatus.LockedTemp => "Đang được giữ",
+        AssetStatus.Maintenance => "Đang bảo trì",
+        _ => status.ToString()
+    };
 }
 
 public class ListAssetModelsTool : IAiToolHandler
@@ -93,32 +104,28 @@ public class ListAssetModelsTool : IAiToolHandler
     {
         var payload = AiJson.Deserialize<ListAssetModelsPayload>(context.Decision.Arguments)
             ?? new ListAssetModelsPayload("available", null, null, null, null, 5);
+        var displayPayload = payload with { PageSize = Math.Min(payload.PageSize ?? 5, 5) };
 
-        var models = await _operations.ListAssetModelsAsync(payload, ct);
+        var models = await _operations.ListAssetModelsAsync(displayPayload, ct);
         var scope = NormalizeScope(payload.Scope, context.UserRole, payload.AvailableOnly == true);
 
         var answer = models.Count == 0
             ? scope switch
             {
-                "all" => "Hiện chưa tìm thấy asset model phù hợp trong toàn bộ hệ thống.",
-                "department" => "Hiện chưa tìm thấy asset model phù hợp trong phạm vi phòng ban.",
-                _ => "Hiện chưa có asset model khả dụng phù hợp với tiêu chí bạn đưa ra."
+                "all" => "Mình chưa tìm thấy dòng thiết bị phù hợp.",
+                "department" => "Mình chưa tìm thấy dòng thiết bị phù hợp trong phòng ban.",
+                _ => "Hiện chưa có dòng thiết bị sẵn sàng theo tiêu chí này."
             }
-            : scope switch
-            {
-                "all" => "Các asset model phù hợp trong toàn công ty: " + string.Join("; ", models.Select(FormatModel)) + ".",
-                "department" => "Các asset model phù hợp trong phòng ban: " + string.Join("; ", models.Select(FormatModel)) + ".",
-                _ => "Các asset model khả dụng phù hợp: " + string.Join("; ", models.Select(FormatModel)) + "."
-            };
+            : $"Có {models.Count} dòng thiết bị phù hợp:\n" + string.Join("\n", models.Select(FormatModel));
 
         return new AiToolExecutionResult(
             AiIntents.ListAssetModels,
             ToolName,
-            AiJson.ToElement(payload with { Scope = scope }),
+            AiJson.ToElement(displayPayload with { Scope = scope }),
             answer,
             [
-                "Liệt kê các asset trống thuộc model này",
-                "Tạo request cấp phát theo model này"
+                "Xem thiết bị đang sẵn sàng",
+                "Tạo yêu cầu cấp phát theo dòng này"
             ],
             [],
             true,
@@ -142,17 +149,10 @@ public class ListAssetModelsTool : IAiToolHandler
 
     private static string FormatModel(AiAssetModelCatalogItem model)
     {
-        var manufacturer = string.IsNullOrWhiteSpace(model.Manufacturer) ? null : model.Manufacturer;
-        var modelNumber = string.IsNullOrWhiteSpace(model.ModelNumber) ? null : model.ModelNumber;
-        return string.Join(", ", new[]
-        {
-            $"{model.Name}",
-            manufacturer,
-            modelNumber,
-            $"in-stock {model.InStockCount}",
-            $"allocated {model.AllocatedCount}",
-            $"locked {model.LockedCount}"
-        }.Where(x => !string.IsNullOrWhiteSpace(x)));
+        var availability = model.InStockCount > 0
+            ? $"{model.InStockCount} thiết bị sẵn sàng"
+            : "Chưa có thiết bị sẵn sàng";
+        return $"• {model.Name} — {availability}";
     }
 }
 
@@ -177,11 +177,10 @@ public class CreateAllocationRequestTool : IAiToolHandler
             var created = await _operations.CreateAllocationRequestFromNeedAsync(payload, context.ConversationId, ct);
 
             var answer =
-                $"Tôi đã tạo request cấp phát cho bạn với asset {created.SelectedAsset.AssetCode} ({created.SelectedAsset.ModelName}). "
-                + $"Mã request: {created.Request.Id}. "
+                $"Đã gửi yêu cầu cấp phát {created.SelectedAsset.AssetCode} — {created.SelectedAsset.ModelName}.\n"
                 + (created.Request.LockExpiresAt is null
-                    ? "Request đang chờ duyệt."
-                    : $"Asset đang được giữ tạm đến {created.Request.LockExpiresAt:dd/MM/yyyy HH:mm} UTC.");
+                    ? "Yêu cầu đang chờ duyệt."
+                    : $"Thiết bị được giữ đến {created.Request.LockExpiresAt:dd/MM HH:mm} UTC trong khi chờ duyệt.");
 
             return new AiToolExecutionResult(
                 AiIntents.CreateAllocationRequest,
@@ -198,7 +197,7 @@ public class CreateAllocationRequestTool : IAiToolHandler
                 }),
                 answer,
                 [
-                    "Liệt kê thêm các asset khả dụng khác",
+                "Xem thêm thiết bị đang sẵn sàng",
                     "Điều chỉnh nhu cầu rồi tạo request khác"
                 ],
                 [],
@@ -231,17 +230,16 @@ public class ListPendingRequestsTool : IAiToolHandler
     {
         var payload = AiJson.Deserialize<ListPendingRequestsPayload>(context.Decision.Arguments)
             ?? new ListPendingRequestsPayload(null, 5);
+        payload = payload with { PageSize = Math.Min(payload.PageSize ?? 5, 5) };
 
         try
         {
             var requests = await _operations.ListPendingRequestsAsync(payload, ct);
             var answer = requests.Count == 0
                 ? "Hiện không có request chờ duyệt nào phù hợp."
-                : "Các request đang chờ duyệt: "
-                  + string.Join("; ", requests.Select(r =>
-                      $"{r.IdShort} - {r.RequesterName} - {r.AssetCode} ({r.ModelName})"
-                      + (r.LockExpiresAt is null ? string.Empty : $", giữ đến {r.LockExpiresAt:dd/MM HH:mm} UTC")))
-                  + ".";
+                : $"Có {requests.Count} yêu cầu đang chờ duyệt:\n"
+                  + string.Join("\n", requests.Select(r =>
+                      $"• {r.IdShort} — {r.RequesterName} · {r.AssetCode} ({r.ModelName})"));
 
             return new AiToolExecutionResult(
                 AiIntents.ListPendingRequests,

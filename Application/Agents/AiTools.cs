@@ -25,23 +25,39 @@ public class GetMyAssetsTool : IAiToolHandler
             ?? new GetMyAssetsPayload("assigned_to_me");
         var assets = await _assetAccess.GetAssignedAssetsAsync(ct);
 
-        string answer = assets.Count == 0
-            ? "Bạn hiện chưa được cấp thiết bị nào."
-            : "Bạn hiện đang được cấp các thiết bị sau: "
-              + string.Join("; ", assets.Select(a =>
-                  $"{a.AssetCode} ({a.ModelName}) - trạng thái {a.Status}"
-                  + (a.WarrantyExpiresAt is null ? string.Empty : $", bảo hành đến {a.WarrantyExpiresAt:dd/MM/yyyy}")))
-              + ".";
+        string answer;
+        if (assets.Count == 0)
+        {
+            answer = "Bạn hiện chưa được cấp thiết bị nào.";
+        }
+        else
+        {
+            var visible = assets.Take(5).Select(FormatAssignedAsset);
+            var remaining = assets.Count - 5;
+            answer = $"Bạn đang sử dụng {assets.Count} thiết bị:\n"
+                     + string.Join("\n", visible)
+                     + (remaining > 0 ? $"\n• Và {remaining} thiết bị khác" : string.Empty);
+        }
 
         return new AiToolExecutionResult(
             AiIntents.QueryMyAssets,
             ToolName,
             AiJson.ToElement(payload),
             answer,
-            ["Kiểm tra trạng thái của một thiết bị cụ thể", "Tìm manual hoặc tài liệu hỗ trợ cho một thiết bị"],
+            ["Kiểm tra chi tiết một thiết bị", "Tìm hướng dẫn sử dụng"],
             NoSources,
             true,
             false);
+    }
+
+    private static string FormatAssignedAsset(AiOwnedAssetSummary asset)
+    {
+        var warranty = asset.WarrantyExpiresAt is { } expiry && expiry.Date <= DateTime.UtcNow.Date.AddDays(30)
+            ? expiry.Date < DateTime.UtcNow.Date
+                ? $" · Hết bảo hành {expiry:dd/MM/yyyy}"
+                : $" · Bảo hành đến {expiry:dd/MM/yyyy}"
+            : string.Empty;
+        return $"• {asset.AssetCode} — {asset.ModelName}{warranty}";
     }
 }
 
@@ -79,23 +95,28 @@ public class GetAssetStatusTool : IAiToolHandler
             .Select(r => new { r.Status, r.StartDate, r.Description })
             .FirstOrDefaultAsync(ct);
 
-        var availability = asset.Status == AssetStatus.InStock ? "sẵn sàng cấp phát" : "không sẵn sàng cấp phát";
-        var holderText = asset.CurrentHolder?.FullName ?? "Chưa có người sử dụng";
+        var statusText = asset.Status switch
+        {
+            AssetStatus.InStock => "Sẵn sàng cấp phát",
+            AssetStatus.Allocated => "Đang được sử dụng",
+            AssetStatus.LockedTemp => "Đang được giữ cho một yêu cầu",
+            AssetStatus.Maintenance => "Đang bảo trì",
+            _ => asset.Status.ToString()
+        };
         var warrantyText = asset.WarrantyExpiresAt is null
-            ? "Không có thông tin bảo hành"
+            ? null
             : asset.WarrantyExpiresAt.Value.Date >= DateTime.UtcNow.Date
                 ? $"Còn bảo hành đến {asset.WarrantyExpiresAt:dd/MM/yyyy}"
                 : $"Đã hết bảo hành từ {asset.WarrantyExpiresAt:dd/MM/yyyy}";
         var maintenanceText = latestMaintenance is null
-            ? "Chưa có lịch sử bảo dưỡng gần đây"
-            : $"Bảo dưỡng gần nhất: {latestMaintenance.Status} từ {latestMaintenance.StartDate:dd/MM/yyyy}";
+            ? null
+            : $"Bảo dưỡng gần nhất: {latestMaintenance.StartDate:dd/MM/yyyy}";
 
-        var answer =
-            $"Thiết bị {asset.AssetCode} ({asset.Model.Name}) hiện ở trạng thái {asset.Status}. "
-            + $"Người đang giữ: {holderText}. "
-            + $"{warrantyText}. "
-            + $"{maintenanceText}. "
-            + $"Khả dụng hiện tại: {availability}.";
+        var details = new List<string> { $"• Trạng thái: {statusText}" };
+        if (asset.CurrentHolder is not null) details.Add($"• Người sử dụng: {asset.CurrentHolder.FullName}");
+        if (warrantyText is not null) details.Add($"• {warrantyText}");
+        if (maintenanceText is not null) details.Add($"• {maintenanceText}");
+        var answer = $"{asset.AssetCode} — {asset.Model.Name}\n" + string.Join("\n", details);
 
         return new AiToolExecutionResult(
             AiIntents.QueryAssetStatus,
@@ -190,9 +211,8 @@ public class SearchManualSourcesTool : IAiToolHandler
 
         var answer = results.Count == 0
             ? "Tôi chưa tìm thấy manual phù hợp trong danh mục tài liệu đã cấu hình. Vui lòng cung cấp rõ hơn hãng hoặc model thiết bị."
-            : "Tôi tìm thấy các tài liệu phù hợp: "
-              + string.Join("; ", results.Select(r => $"{r.Title} ({r.Url})"))
-              + ".";
+            : $"Mình tìm thấy {results.Count} tài liệu phù hợp:\n"
+              + string.Join("\n", results.Select(r => $"• {r.Title}"));
 
         return new AiToolExecutionResult(
             AiIntents.SearchManual,
@@ -231,6 +251,7 @@ public class SearchManualSourcesTool : IAiToolHandler
 
         return tokens.Count(token => haystack.Contains(token, StringComparison.Ordinal));
     }
+
 }
 
 public class CreateMaintenanceDraftTool : IAiToolHandler
