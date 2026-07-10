@@ -122,6 +122,8 @@ public class UserAdminService
 
         var departmentChanged = user.DepartmentId != req.DepartmentId;
         var deactivated = user.IsActive && !req.IsActive;
+        if (deactivated && id == _currentUser.Id)
+            throw new DomainException("You cannot deactivate your own account.");
         var securityContextChanged = departmentChanged || user.Role != req.Role || deactivated;
 
         user.Email = req.Email.Trim();
@@ -137,9 +139,11 @@ public class UserAdminService
             await RevokeRefreshSessionsAsync(user.Id, ct);
         }
 
-        if (deactivated || departmentChanged)
+        if (deactivated)
+            await CompleteOffboardingAsync(user.Id, ct);
+        else if (departmentChanged)
             await CreateReturnObligationsAsync(user.Id,
-                deactivated ? ReturnObligationReason.UserDeactivated : ReturnObligationReason.DepartmentChanged, ct);
+                ReturnObligationReason.DepartmentChanged, ct);
 
         await _db.SaveChangesAsync(ct);
         return await GetByIdAsync(user.Id, ct);
@@ -160,7 +164,7 @@ public class UserAdminService
         await _db.SaveChangesAsync(ct);
     }
 
-    public async Task DeactivateAsync(Guid id, CancellationToken ct)
+    public async Task<UserDto> OffboardAsync(Guid id, CancellationToken ct)
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id, ct)
             ?? throw new DomainException("User not found.");
@@ -172,8 +176,14 @@ public class UserAdminService
         // Rotate stamp to revoke any active sessions.
         user.SecurityStamp = Guid.NewGuid().ToString("N");
         await RevokeRefreshSessionsAsync(user.Id, ct);
-        await CreateReturnObligationsAsync(user.Id, ReturnObligationReason.UserDeactivated, ct);
+        await CompleteOffboardingAsync(user.Id, ct);
         await _db.SaveChangesAsync(ct);
+        return await GetByIdAsync(user.Id, ct);
+    }
+
+    public async Task DeactivateAsync(Guid id, CancellationToken ct)
+    {
+        await OffboardAsync(id, ct);
     }
 
     private async Task EnsureDepartmentExistsAsync(Guid? departmentId, CancellationToken ct)
@@ -204,6 +214,42 @@ public class UserAdminService
                 Reason = reason,
                 DueAt = dueAt
             });
+    }
+
+    private async Task CompleteOffboardingAsync(Guid userId, CancellationToken ct)
+    {
+        var actor = _currentUser.Id;
+        var now = DateTime.UtcNow;
+        var pendingRequests = await _db.AllocationRequests
+            .Include(r => r.AssetInstance)
+            .Where(r => r.RequesterId == userId &&
+                        (r.Status == RequestStatus.Pending || r.Status == RequestStatus.Locked))
+            .ToListAsync(ct);
+
+        foreach (var request in pendingRequests)
+        {
+            request.Status = RequestStatus.Cancelled;
+            request.CancelledAt = now;
+            request.CancellationReason = "Requester offboarded.";
+            request.LockToken = null;
+            request.LockExpiresAt = null;
+            request.UpdatedAt = now;
+
+            var asset = request.AssetInstance;
+            if (asset.Status == AssetStatus.LockedTemp &&
+                asset.LockHolderUserId == userId &&
+                asset.CurrentHolderId == userId)
+            {
+                asset.Status = AssetStatus.InStock;
+                asset.CurrentHolderId = null;
+                asset.LockToken = null;
+                asset.LockExpiresAt = null;
+                asset.LockHolderUserId = null;
+                asset.UpdatedBy = actor;
+            }
+        }
+
+        await CreateReturnObligationsAsync(userId, ReturnObligationReason.UserDeactivated, ct);
     }
 
     private async Task RevokeRefreshSessionsAsync(Guid userId, CancellationToken ct)

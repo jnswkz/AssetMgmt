@@ -50,6 +50,11 @@ public class UsersController : ControllerBase
         return NoContent();
     }
 
+    [HttpPost("{id:guid}/offboard")]
+    [Authorize(Policy = "RequireAdminIT")]
+    public async Task<ActionResult<UserDto>> Offboard(Guid id, CancellationToken ct)
+        => Ok(await _service.OffboardAsync(id, ct));
+
     [HttpDelete("{id:guid}")]
     [Authorize(Policy = "RequireAdminIT")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)

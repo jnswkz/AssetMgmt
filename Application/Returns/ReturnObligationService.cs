@@ -1,5 +1,7 @@
 using AssetMgmt.Application.Auth;
 using AssetMgmt.Application.Common;
+using AssetMgmt.Domain.Entities;
+using AssetMgmt.Domain.Enums;
 using AssetMgmt.Domain.Exceptions;
 using AssetMgmt.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -37,9 +39,20 @@ public class ReturnObligationService
             .ToListAsync(ct);
     }
 
-    public async Task<ReturnObligationDto> ResolveAsync(Guid id, string? notes, CancellationToken ct)
+    private Guid CurrentUserId =>
+        _currentUser.Id ?? throw new DomainException("Not authenticated.");
+
+    public Task<ReturnObligationDto> ResolveAsync(Guid id, string? notes, CancellationToken ct) =>
+        _db.ExecuteWithRetryStrategyAsync(() => ResolveCoreAsync(id, notes, ct));
+
+    private async Task<ReturnObligationDto> ResolveCoreAsync(Guid id, string? notes, CancellationToken ct)
     {
-        var obligation = await _db.ReturnObligations.Include(o => o.User)
+        var actor = CurrentUserId;
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+        var obligation = await _db.ReturnObligations
+            .Include(o => o.User)
+            .Include(o => o.AssetInstance)
             .FirstOrDefaultAsync(o => o.Id == id, ct)
             ?? throw new DomainException("Return obligation not found.");
         if (obligation.ResolvedAt is not null)
@@ -47,10 +60,35 @@ public class ReturnObligationService
         if (_scope.IsManager)
             await _scope.EnsureDepartmentAccessAsync(obligation.User.DepartmentId, ct);
 
-        obligation.ResolvedAt = DateTime.UtcNow;
-        obligation.ResolvedBy = _currentUser.Id;
+        var now = DateTime.UtcNow;
+        var asset = obligation.AssetInstance;
+        if (asset.Status == AssetStatus.Allocated && asset.CurrentHolderId == obligation.UserId)
+        {
+            asset.Status = AssetStatus.InStock;
+            asset.CurrentHolderId = null;
+            asset.UpdatedBy = actor;
+
+            _db.Allocations.Add(new Allocation
+            {
+                AssetInstanceId = asset.Id,
+                UserId = obligation.UserId,
+                EventType = AllocationEventType.Returned,
+                StartDate = now.Date,
+                EndDate = now.Date,
+                Notes = notes?.Trim() ?? "Returned during offboarding.",
+                CreatedBy = actor
+            });
+        }
+        else if (asset.Status == AssetStatus.Allocated && asset.CurrentHolderId != obligation.UserId)
+        {
+            throw new DomainException("Asset is allocated to another user.");
+        }
+
+        obligation.ResolvedAt = now;
+        obligation.ResolvedBy = actor;
         obligation.ResolutionNotes = notes?.Trim();
         await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         return (await ListAsync(true, ct)).Single(o => o.Id == id);
     }
 }

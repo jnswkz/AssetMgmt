@@ -194,6 +194,7 @@ public class AllocationRequestService
             var request = await _db.AllocationRequests.FirstOrDefaultAsync(r => r.Id == id, ct)
                 ?? throw new DomainException("Request not found.");
             await EnsureManagerCanActAsync(request.RequesterId, ct);
+            await EnsureRequesterActiveAsync(request.RequesterId, ct);
             if (request.Status != RequestStatus.Pending)
                 throw new DomainException("Only pending requests can be approved.");
 
@@ -320,5 +321,15 @@ public class AllocationRequestService
             .Select(u => u.DepartmentId)
             .SingleAsync(ct);
         await _scope.EnsureDepartmentAccessAsync(departmentId, ct);
+    }
+
+    private async Task EnsureRequesterActiveAsync(Guid requesterId, CancellationToken ct)
+    {
+        var isActive = await _db.Users.AsNoTracking()
+            .Where(u => u.Id == requesterId)
+            .Select(u => u.IsActive)
+            .SingleAsync(ct);
+        if (!isActive)
+            throw new DomainException("Requester is not active.");
     }
 }
